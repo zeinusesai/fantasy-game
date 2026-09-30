@@ -40,13 +40,15 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
+import { avatarPresetUrl } from "@/lib/fantasy";
 import { HOUSES, POSITION_LABELS, STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { House, Position, RequestStatus, Stage } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
-type PriceRequest = Doc<"priceRequests">;
+type PriceRequest = Doc<"priceRequests"> & { avatar: string | null };
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -69,6 +71,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
+import { MatchControlCenter } from "@/components/MatchControlCenter";
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
@@ -642,8 +645,12 @@ function MatchesTab() {
   );
 
   return (
-    <div className="grid gap-6 xl:grid-cols-5">
-      {/* Report form */}
+    <div className="space-y-6">
+      {/* FotMob-style match center control (lineups, events, ratings, PotM) */}
+      <MatchControlCenter />
+
+      <div className="grid gap-6 xl:grid-cols-5">
+        {/* Report form */}
       <div className="space-y-6 xl:col-span-3">
         <Card className="card-sheen border-border/80">
           <CardHeader>
@@ -889,6 +896,7 @@ function MatchesTab() {
             ))}
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   );
@@ -1318,6 +1326,23 @@ function RequestsTab({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 text-sm font-semibold">
+                        <Avatar className="size-6">
+                          <AvatarImage
+                            src={
+                              avatarPresetUrl(r.avatar) ??
+                              (r.avatar?.startsWith("http") || r.avatar?.startsWith("data:")
+                                ? r.avatar
+                                : undefined)
+                            }
+                            alt={r.username ?? "avatar"}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.visibility = "hidden";
+                            }}
+                          />
+                          <AvatarFallback className="bg-primary/20 text-primary text-[9px] font-bold">
+                            {(r.username ?? "?").slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
                         @{r.username || "unknown"}
                         <span className="text-muted-foreground font-normal">
                           requests a price change for

@@ -9,12 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/convex/configDefaults";
-import { AVATAR_PRESETS, avatarPresetUrl } from "@/lib/fantasy";
+import { avatarPresetUrl } from "@/lib/fantasy";
+import { AvatarPicker } from "@/components/AvatarPicker";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { PageLoading } from "@/components/PageLoading";
 import { toast } from "sonner";
-import { Loader2, Save, Star } from "lucide-react";
+import { Camera, Loader2, Save, Star } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function Profile() {
@@ -29,16 +30,16 @@ export default function Profile() {
   const loading = authLoading || mySquadResult === undefined || myStatsResult === undefined;
 
   const [teamName, setTeamName] = useState("");
-  const [avatar, setAvatar] = useState<string>(AVATAR_PRESETS[0].id);
+  const [avatar, setAvatar] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (user && !loaded) {
       setTeamName(user.teamName ?? "");
-      if (user.image && !user.image.startsWith("data:") && !user.image.startsWith("http")) {
-        setAvatar(user.image);
-      }
+      // Mirror the stored avatar value (preset id OR upload URL).
+      setAvatar(user.image ?? "");
       setLoaded(true);
     }
   }, [user, loaded]);
@@ -46,7 +47,7 @@ export default function Profile() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateProfile({ teamName: teamName.trim(), avatar });
+      await updateProfile({ teamName: teamName.trim() });
       toast.success("Profile updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update profile.");
@@ -76,8 +77,11 @@ export default function Profile() {
     }>>,
   );
 
+  // Preset id -> generated SVG; upload -> its own URL; nothing -> undefined
+  // so the Avatar's fallback initials render.
   const avatarSrc =
-    avatarPresetUrl(avatar) ?? user?.image ?? undefined;
+    avatarPresetUrl(avatar) ??
+    (avatar.startsWith("http") || avatar.startsWith("data:") ? avatar : undefined);
 
   return (
     <AppNav>
@@ -95,7 +99,13 @@ export default function Profile() {
           <CardContent className="space-y-4">
             <div className="flex items-center gap-3">
               <Avatar className="size-16">
-                <AvatarImage src={avatarSrc} alt="avatar" />
+                <AvatarImage
+                  src={avatarSrc}
+                  alt="avatar"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.visibility = "hidden";
+                  }}
+                />
                 <AvatarFallback className="bg-primary/20 text-primary font-bold">
                   {(user?.username ?? "?").slice(0, 2).toUpperCase()}
                 </AvatarFallback>
@@ -123,25 +133,19 @@ export default function Profile() {
             </div>
 
             <div className="grid gap-2">
-              <Label>Profile crest</Label>
-              <div className="flex flex-wrap gap-2">
-                {AVATAR_PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => setAvatar(preset.id)}
-                    className={cn(
-                      "flex size-10 items-center justify-center rounded-full border-2 text-lg transition-all",
-                      avatar === preset.id
-                        ? "border-primary scale-110 bg-primary/10"
-                        : "border-transparent bg-secondary hover:border-border",
-                    )}
-                    title={preset.label}
-                  >
-                    {preset.emoji}
-                  </button>
-                ))}
-              </div>
+              <Label>Profile picture</Label>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPickerOpen(true)}
+                className="w-full"
+              >
+                <Camera className="mr-1.5 size-4" /> Edit profile picture
+              </Button>
+              <p className="text-muted-foreground text-xs">
+                Pick a preset (house crests, football icons, mascots) or upload
+                your own image (max 2MB).
+              </p>
             </div>
 
             <Button onClick={handleSave} disabled={saving} className="w-full">
@@ -226,6 +230,13 @@ export default function Profile() {
         </div>
       </div>
       )}
+      <AvatarPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        currentAvatarId={avatar || null}
+        username={user?.username ?? null}
+        role={user?.role ?? null}
+      />
     </AppNav>
   );
 }

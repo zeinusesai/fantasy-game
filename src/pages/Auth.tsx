@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
-import { AVATAR_PRESETS } from "@/lib/fantasy";
+import { AVATAR_PRESETS, avatarPresetUrl } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { Eye, EyeOff, Loader2, LogIn, Swords, UserPlus } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
@@ -190,25 +190,44 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
 
                   <div className="grid gap-2">
                     <Label>Profile crest</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {AVATAR_PRESETS.map((preset) => (
-                        <button
-                          key={preset.id}
-                          type="button"
-                          onClick={() => setAvatar(preset.id)}
-                          className={cn(
-                            "flex size-11 items-center justify-center rounded-full border-2 text-xl transition-all",
-                            avatar === preset.id
-                              ? "border-primary scale-110 bg-primary/10"
-                              : "border-transparent bg-secondary hover:border-border",
-                          )}
-                          title={preset.label}
-                          disabled={isLoading}
-                        >
-                          {preset.emoji}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-6 gap-2">
+                      {AVATAR_PRESETS.filter(
+                        (p) => p.group === "houses" || p.group === "footballers" || p.group === "icons",
+                      ).map((preset) => {
+                        const url = avatarPresetUrl(preset.id);
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => setAvatar(preset.id)}
+                            className={cn(
+                              "flex items-center justify-center rounded-full border-2 transition-all",
+                              avatar === preset.id
+                                ? "border-primary scale-110 bg-primary/10"
+                                : "border-transparent bg-secondary hover:border-border",
+                            )}
+                            title={preset.label}
+                            disabled={isLoading}
+                          >
+                            {url ? (
+                              <img
+                                src={url}
+                                alt={preset.label}
+                                width={44}
+                                height={44}
+                                className="size-11 rounded-full"
+                              />
+                            ) : (
+                              <span className="text-xl">{preset.emoji ?? "⚽"}</span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
+                    <p className="text-muted-foreground text-xs">
+                      House crests, football icons and sport badges — you can
+                      upload a custom photo from your profile page later.
+                    </p>
                   </div>
                 </>
               )}

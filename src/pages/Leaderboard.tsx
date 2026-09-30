@@ -97,7 +97,13 @@ export default function Leaderboard() {
                         </TableCell>
                         <TableCell>
                           <Avatar className="size-8">
-                            <AvatarImage src={avatar ?? undefined} alt={row.username} />
+                            <AvatarImage
+                              src={avatar ?? undefined}
+                              alt={row.username}
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.visibility = "hidden";
+                              }}
+                            />
                             <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
                               {row.username.slice(0, 2).toUpperCase()}
                             </AvatarFallback>

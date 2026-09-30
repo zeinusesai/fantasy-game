@@ -53,7 +53,377 @@ export const getMatch = query({
   },
 });
 
+/**
+ * FotMob-style match detail payload: the match doc plus resolved player docs
+ * for every id referenced by lineups, timeline events, ratings and PotM.
+ * Public + null-safe: unknown id -> null, storage hiccup -> null. All nested
+ * arrays default to [] client-side; never throws for subscribers.
+ */
+export const getMatchDetails = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    try {
+      const match = await ctx.db.get(matchId);
+      if (!match) return null;
+
+      // Collect every referenced player id defensively (optional fields may
+      // be undefined; timeline assists may be absent).
+      const ids = new Set<string>();
+      if (match.potmPlayerId) ids.add(match.potmPlayerId);
+      for (const id of match.lineups?.homeStarters ?? []) ids.add(id);
+      for (const id of match.lineups?.awayStarters ?? []) ids.add(id);
+      for (const ev of match.timelineEvents ?? []) {
+        ids.add(ev.playerId);
+        if (ev.assistPlayerId) ids.add(ev.assistPlayerId);
+      }
+      for (const r of match.playerRatings ?? []) ids.add(r.playerId);
+
+      const players = await Promise.all(
+        [...ids].map((id) => ctx.db.get(id as Id<"players">)),
+      );
+      const playerDocs = players.filter(
+        (p): p is NonNullable<typeof p> => p !== null,
+      );
+
+      return { match, players: playerDocs };
+    } catch {
+      return null;
+    }
+  },
+});
+
 // ── Super admin mutations ────────────────────────────────────────────────
+
+/**
+ * Set or update the human-readable match date label (e.g. "Fri 14 Nov, 6 PM").
+ */
+export const setMatchDate = mutation({
+  args: { matchId: v.id("matches"), matchDate: v.string() },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can edit matches.",
+      );
+    }
+    const matchDate = typeof args.matchDate === "string" ? args.matchDate.trim() : "";
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+      await ctx.db.patch(args.matchId, {
+        matchDate: matchDate || undefined,
+        ...(matchDate ? { kickoffLabel: matchDate } : {}),
+      });
+      return { matchDate };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not set the match date — please try again.");
+    }
+  },
+});
+
+/**
+ * Set the starting 7 for both houses (lineup manager / preview builder).
+ * Validates every id: player must exist, be active, and belong to the
+ * correct house. Same-transaction patch keeps lineups atomic.
+ */
+export const setLineups = mutation({
+  args: {
+    matchId: v.id("matches"),
+    homeStarters: v.array(v.id("players")),
+    awayStarters: v.array(v.id("players")),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can edit lineups.",
+      );
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+      if (args.homeStarters.length > 7 || args.awayStarters.length > 7) {
+        throw new Error("Each house can field at most 7 starters.");
+      }
+
+      const all = [...args.homeStarters, ...args.awayStarters];
+      if (new Set(all.map(String)).size !== all.length) {
+        throw new Error("A player cannot start for both houses.");
+      }
+
+      const docs = await Promise.all(all.map((id) => ctx.db.get(id)));
+      for (let i = 0; i < all.length; i++) {
+        const doc = docs[i];
+        if (!doc || !doc.active) {
+          throw new Error(`Player on line ${i + 1} no longer exists or was removed.`);
+        }
+        const isHome = i < args.homeStarters.length;
+        const expectedHouse = isHome ? match.homeHouse : match.awayHouse;
+        if (doc.house !== expectedHouse) {
+          throw new Error(
+            `${doc.name} belongs to ${doc.house}, not ${expectedHouse} — check the lineup.`,
+          );
+        }
+      }
+
+      await ctx.db.patch(args.matchId, {
+        lineups: {
+          homeStarters: args.homeStarters,
+          awayStarters: args.awayStarters,
+        },
+      });
+      return { home: args.homeStarters.length, away: args.awayStarters.length };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save the lineups — please try again.");
+    }
+  },
+});
+
+/**
+ * Log one timeline event (goal / yellow_card / red_card / sub). Player and
+ * assist names are resolved server-side from the player docs — the client
+ * never supplies display names. Goals automatically increment the score.
+ */
+export const logTimelineEvent = mutation({
+  args: {
+    matchId: v.id("matches"),
+    type: v.union(
+      v.literal("goal"),
+      v.literal("yellow_card"),
+      v.literal("red_card"),
+      v.literal("sub"),
+    ),
+    minute: v.number(),
+    playerId: v.id("players"),
+    assistPlayerId: v.optional(v.id("players")),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can log events.",
+      );
+    }
+
+    // Explicit numeric parsing/validation before any DB write.
+    const minute = Number(args.minute);
+    if (!Number.isFinite(minute) || minute < 0 || minute > 130) {
+      throw new Error("Minute must be a number between 0 and 130.");
+    }
+    if (args.type === "goal" && args.assistPlayerId === args.playerId) {
+      throw new Error("The assister must be a different player.");
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+
+      const scorer = await ctx.db.get(args.playerId);
+      if (!scorer || !scorer.active) {
+        throw new Error("That player no longer exists or was removed.");
+      }
+      const expectedHouse =
+        scorer.house === match.homeHouse ? match.homeHouse : scorer.house;
+      if (scorer.house !== match.homeHouse && scorer.house !== match.awayHouse) {
+        throw new Error(`${scorer.name} is not in either of tonight's houses.`);
+      }
+
+      let assistPlayerName: string | undefined;
+      if (args.assistPlayerId) {
+        const assister = await ctx.db.get(args.assistPlayerId);
+        if (!assister) throw new Error("The selected assister no longer exists.");
+        assistPlayerName = assister.name;
+      }
+
+      const events = match.timelineEvents ?? [];
+      const event = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: args.type,
+        minute,
+        playerId: args.playerId,
+        playerName: scorer.name,
+        ...(args.assistPlayerId ? { assistPlayerId: args.assistPlayerId } : {}),
+        ...(assistPlayerName ? { assistPlayerName } : {}),
+        house: scorer.house as typeof match.homeHouse,
+      };
+
+      await ctx.db.patch(args.matchId, {
+        timelineEvents: [...events, event],
+        ...(args.type === "goal"
+          ? scorer.house === match.homeHouse
+            ? { homeGoals: match.homeGoals + 1 }
+            : { awayGoals: match.awayGoals + 1 }
+          : {}),
+      });
+      return { eventId: event.id };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not log the event — please try again.");
+    }
+  },
+});
+
+/**
+ * Remove a timeline event by id. Removing a goal event decrements the score
+ * so the scoreboard and the event feed can never drift apart.
+ */
+export const removeTimelineEvent = mutation({
+  args: { matchId: v.id("matches"), eventId: v.string() },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can edit events.",
+      );
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+      const events = match.timelineEvents ?? [];
+      const target = events.find((e) => e.id === args.eventId);
+      if (!target) throw new Error("Event not found — it may already be removed.");
+
+      const remaining = events.filter((e) => e.id !== args.eventId);
+      const patch: Record<string, unknown> = { timelineEvents: remaining };
+      if (target.type === "goal") {
+        if (target.house === match.homeHouse) {
+          patch.homeGoals = Math.max(0, match.homeGoals - 1);
+        } else {
+          patch.awayGoals = Math.max(0, match.awayGoals - 1);
+        }
+      }
+      await ctx.db.patch(args.matchId, patch);
+      return { removed: true };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not remove the event — please try again.");
+    }
+  },
+});
+
+/**
+ * Bulk-set FotMob player ratings (1.0-10.0) with per-player stat lines.
+ * Every value is re-parsed and range-checked server-side.
+ */
+export const setPlayerRatings = mutation({
+  args: {
+    matchId: v.id("matches"),
+    ratings: v.array(
+      v.object({
+        playerId: v.id("players"),
+        rating: v.number(),
+        goals: v.number(),
+        assists: v.number(),
+        saves: v.number(),
+        yellowCards: v.number(),
+        redCards: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can set ratings.",
+      );
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+      if (args.ratings.length > 14) {
+        throw new Error("At most 14 player lines (7 per house) are allowed.");
+      }
+
+      const seen = new Set<string>();
+      const rows = [];
+      for (const r of args.ratings) {
+        if (seen.has(String(r.playerId))) {
+          throw new Error("Duplicate player in the ratings list.");
+        }
+        seen.add(String(r.playerId));
+
+        const rating = Number(r.rating);
+        if (!Number.isFinite(rating) || rating < 1 || rating > 10) {
+          throw new Error(`Rating for one of the players must be between 1.0 and 10.0.`);
+        }
+        for (const n of [r.goals, r.assists, r.saves, r.yellowCards, r.redCards]) {
+          if (!Number.isInteger(Number(n)) || Number(n) < 0) {
+            throw new Error("Stats must be non-negative whole numbers.");
+          }
+        }
+
+        const player = await ctx.db.get(r.playerId);
+        if (!player) throw new Error("A rated player no longer exists.");
+        rows.push({
+          playerId: r.playerId,
+          playerName: player.name,
+          house: player.house as typeof match.homeHouse,
+          rating: Math.round(rating * 10) / 10,
+          goals: Number(r.goals),
+          assists: Number(r.assists),
+          saves: Number(r.saves),
+          yellowCards: Number(r.yellowCards),
+          redCards: Number(r.redCards),
+        });
+      }
+
+      await ctx.db.patch(args.matchId, { playerRatings: rows });
+      return { count: rows.length };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save the ratings — please try again.");
+    }
+  },
+});
+
+/** Assign the Player of the Match. Must be a rated or lined-up player. */
+export const setPotmPlayer = mutation({
+  args: { matchId: v.id("matches"), playerId: v.optional(v.id("players")) },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can assign PotM.",
+      );
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found.");
+      if (args.playerId) {
+        const player = await ctx.db.get(args.playerId);
+        if (!player) throw new Error("That player no longer exists.");
+        const inRatings = (match.playerRatings ?? []).some(
+          (r) => r.playerId === args.playerId,
+        );
+        const inLineups =
+          (match.lineups?.homeStarters ?? []).includes(args.playerId) ||
+          (match.lineups?.awayStarters ?? []).includes(args.playerId);
+        if (!inRatings && !inLineups) {
+          throw new Error(
+            "PotM must be one of the players rated or lined up for this match.",
+          );
+        }
+      }
+      await ctx.db.patch(args.matchId, { potmPlayerId: args.playerId });
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not assign PotM — please try again.");
+    }
+  },
+});
 
 export const scheduleMatch = mutation({
   args: {

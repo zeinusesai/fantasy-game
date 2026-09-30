@@ -95,6 +95,7 @@ export const listAllUsersWithRoles = query({
           _id: u._id,
           username: u.username ?? null,
           teamName: u.teamName ?? null,
+          image: u.image ?? null,
           role: normalizeRole(u.role),
         }))
         .sort((a, b) => (a.username ?? "").localeCompare(b.username ?? ""));

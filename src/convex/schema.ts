@@ -134,6 +134,44 @@ const schema = defineSchema(
       createdAt: v.number(),
       // PotM player id
       potmPlayerId: v.optional(v.id("players")),
+
+      // ── Rich match-center metadata (all optional — safe defaults) ──
+      matchDate: v.optional(v.string()), // display label e.g. "Fri 14 Nov, 6 PM"
+      timelineEvents: v.optional(
+        v.array(
+          v.object({
+            id: v.string(),
+            type: v.string(), // "goal" | "yellow_card" | "red_card" | "sub"
+            minute: v.number(),
+            playerId: v.id("players"),
+            playerName: v.string(),
+            assistPlayerId: v.optional(v.id("players")),
+            assistPlayerName: v.optional(v.string()),
+            house: houseValidator,
+          }),
+        ),
+      ),
+      lineups: v.optional(
+        v.object({
+          homeStarters: v.array(v.id("players")), // up to 7 player ids
+          awayStarters: v.array(v.id("players")),
+        }),
+      ),
+      playerRatings: v.optional(
+        v.array(
+          v.object({
+            playerId: v.id("players"),
+            playerName: v.string(),
+            house: houseValidator,
+            rating: v.number(), // 1.0 - 10.0
+            goals: v.number(),
+            assists: v.number(),
+            saves: v.number(),
+            yellowCards: v.number(),
+            redCards: v.number(),
+          }),
+        ),
+      ),
     })
       .index("by_stage", ["stage"])
       .index("by_status", ["status"]),

@@ -10,6 +10,49 @@ import {
   getLeaderboardRows,
 } from "./lib";
 
+// ── Avatar uploads (Convex file storage) ─────────────────────────────────
+
+// 2MB hard cap — matches the client-side check and protects storage.
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const ALLOWED_AVATAR_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+] as const;
+
+/**
+ * Hands the signed-in user a one-time upload URL for their custom avatar.
+ * The file itself never passes through a mutation — the client PUTs it
+ * straight to storage, then calls finalizeAvatarUpload.
+ */
+export const generateAvatarUploadUrl = mutation({
+  args: { fileType: v.string() },
+  handler: async (ctx, { fileType }) => {
+    try {
+      await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to upload an avatar.",
+      );
+    }
+    if (
+      !ALLOWED_AVATAR_TYPES.includes(
+        fileType as (typeof ALLOWED_AVATAR_TYPES)[number],
+      )
+    ) {
+      throw new Error(
+        "Unsupported image type — use PNG, JPG, WEBP or GIF.",
+      );
+    }
+    try {
+      return await ctx.storage.generateUploadUrl();
+    } catch {
+      throw new Error("Could not start the upload — please try again.");
+    }
+  },
+});
+
 /** App bootstrap: seeds the pre-registered admin accounts (idempotent). */
 export const bootstrap = mutation({
   args: {},
@@ -33,6 +76,84 @@ export const getUsernameExists = query({
 });
 
 // ── Profile ──────────────────────────────────────────────────────────────
+
+/**
+ * Store a custom avatar: the client uploads the file straight to Convex
+ * storage, then calls this with the resulting id. We validate type + size
+ * server-side (2MB cap, PNG/JPG/WEBP/GIF) and persist both the auth `image`
+ * field and the `profilePic` alias. The display URL is resolved server-side
+ * via ctx.storage.getUrl — the client never supplies it.
+ */
+export const finalizeAvatarUpload = mutation({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    let user;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to upload an avatar.",
+      );
+    }
+
+    try {
+      const meta = await ctx.db.system.get(storageId);
+      if (!meta) throw new Error("Upload not found — please try again.");
+      if (!ALLOWED_AVATAR_TYPES.includes(meta.contentType as never)) {
+        throw new Error(
+          "Unsupported image type — use PNG, JPG, WEBP or GIF.",
+        );
+      }
+      if (meta.size > MAX_AVATAR_BYTES) {
+        throw new Error("Image is over the 2MB limit — please use a smaller file.");
+      }
+
+      const url = await ctx.storage.getUrl(storageId);
+      if (!url) {
+        throw new Error("Could not load the uploaded image — please try again.");
+      }
+
+      await ctx.db.patch(user._id, {
+        image: url,
+        profilePic: url,
+      });
+      return { url };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save your avatar — please try again.");
+    }
+  },
+});
+
+/**
+ * Switch the signed-in user's profile picture to a preset avatar id.
+ * Preset ids are validated server-side (non-empty string) before writing.
+ */
+export const updateAvatar = mutation({
+  args: { avatarId: v.string() },
+  handler: async (ctx, { avatarId }) => {
+    let user;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to change your avatar.",
+      );
+    }
+    const id = typeof avatarId === "string" ? avatarId.trim() : "";
+    if (!id) throw new Error("Missing avatar selection.");
+
+    try {
+      await ctx.db.patch(user._id, {
+        image: id,
+        profilePic: id,
+      });
+      return { avatarId: id };
+    } catch {
+      throw new Error("Could not save your avatar — please try again.");
+    }
+  },
+});
 
 export const updateProfile = mutation({
   args: {

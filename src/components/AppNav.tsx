@@ -111,7 +111,13 @@ export function AppNav({ children }: { children: ReactNode }) {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="gap-2 px-2">
                 <Avatar className="size-7">
-                  <AvatarImage src={avatar ?? undefined} alt={user?.username ?? "avatar"} />
+                  <AvatarImage
+                    src={avatar ?? undefined}
+                    alt={user?.username ?? "avatar"}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
                   <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
                     {(user?.username ?? "?").slice(0, 2).toUpperCase()}
                   </AvatarFallback>

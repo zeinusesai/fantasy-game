@@ -23,7 +23,11 @@ export const listPriceRequests = query({
       return [];
     }
     const requests = await ctx.db.query("priceRequests").collect();
-    return requests.sort((a, b) => b._creationTime - a._creationTime);
+    const users = await ctx.db.query("users").collect();
+    const avatarById = new Map(users.map((u) => [u._id, u.image ?? null]));
+    return requests
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .map((r) => ({ ...r, avatar: avatarById.get(r.userId) ?? null }));
   },
 });
 
