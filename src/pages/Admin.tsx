@@ -767,7 +767,11 @@ function MatchesTab() {
 // ── Users tab (super admin only) ─────────────────────────────────────────
 
 function UsersTab() {
-  const users = useQuery(api.usersAdmin.listUsers);
+  // `?? []`: undefined (still loading) and null-safe results both render as an
+  // empty list instead of crashing on `.map`.
+  const usersResult = useQuery(api.usersAdmin.listUsers);
+  const users = usersResult ?? [];
+  const usersLoading = usersResult === undefined;
   const updateUser = useMutation(api.usersAdmin.updateUser);
   const requestPasswordReset = useMutation(api.usersAdmin.requestPasswordReset);
 
@@ -834,8 +838,14 @@ function UsersTab() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {(users ?? []).length === 0 ? (
-          <p className="text-muted-foreground py-6 text-center text-sm">No users found.</p>
+        {usersLoading ? (
+          <p className="text-muted-foreground flex items-center justify-center gap-2 py-6 text-sm">
+            <Loader2 className="size-4 animate-spin" /> Loading users…
+          </p>
+        ) : users.length === 0 ? (
+          <p className="text-muted-foreground py-6 text-center text-sm">
+            No users found — or your account doesn't have access to this list.
+          </p>
         ) : (
           <Table>
             <TableHeader>
@@ -848,7 +858,7 @@ function UsersTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(users ?? []).map((u) =>
+              {users.map((u) =>
                 editingId === u._id ? (
                   <TableRow key={u._id}>
                     <TableCell className="font-semibold">@{u.username}</TableCell>

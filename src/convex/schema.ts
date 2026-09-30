@@ -71,6 +71,7 @@ const schema = defineSchema(
       // fantasy manager profile
       username: v.optional(v.string()), // unique sign-in name (managers + admins)
       teamName: v.optional(v.string()), // fantasy team display name
+      profilePic: v.optional(v.string()), // optional profile photo (alias of image)
       budget: v.optional(v.number()), // remaining budget in $ (millions as plain numbers)
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
