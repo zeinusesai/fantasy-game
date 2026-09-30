@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";import { getAuthUserId } from "@convex-dev/auth/server";
+import { query, mutation } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { normalizeUsername } from "./configDefaults";
@@ -17,25 +18,17 @@ export const bootstrap = mutation({
   },
 });
 
-/** Public query so the client can confirm seeding ran (used on app load). */
+/** Public availability probe for the signup form (case-insensitive). */
 export const getUsernameExists = query({
   args: { username: v.string() },
   handler: async (ctx, { username }) => {
     const user = await ctx.db
       .query("users")
-      .withIndex("by_username", (q) => q.eq("username", normalizeUsername(username)))
+      .withIndex("by_username", (q) =>
+        q.eq("username", normalizeUsername(username)),
+      )
       .unique();
     return user !== null;
-  },
-});
-
-export const getUserByUsername = query({
-  args: { username: v.string() },
-  handler: async (ctx, { username }) => {
-    return ctx.db
-      .query("users")
-      .withIndex("by_username", (q) => q.eq("username", username))
-      .unique();
   },
 });
 
@@ -125,13 +118,13 @@ export const getTournamentLeaders = query({
   },
 });
 
-// ── Stats for the user's own dashboard header ────────────────────────────
+// ── Stats for the signed-in manager (null-safe: never throws) ────────────
 
 export const getMyStats = query({
   args: {},
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) return null;
+    if (userId === null) return null; // not signed in (yet)
     const rows = await getLeaderboardRows(ctx);
     const mine = rows.find((r) => r.userId === userId);
     const rank = mine ? rows.findIndex((r) => r.userId === userId) + 1 : null;

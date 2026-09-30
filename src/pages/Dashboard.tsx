@@ -19,7 +19,10 @@ import {
   ArrowRight,
   BarChart3,
   Clock,
+  Crown,
   Flame,
+  Loader2,
+  Shield,
   Star,
   Trophy,
   Users,
@@ -27,12 +30,35 @@ import {
 import { useNavigate } from "react-router";
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
+
+  // `undefined` = query still resolving; `null` = resolved, no squad yet.
   const mySquad = useQuery(api.squads.getMySquad);
   const myStats = useQuery(api.managers.getMyStats);
   const matches = useQuery(api.matches.listMatches);
   const config = useQuery(api.config.getConfig);
+
+  // Loading guards: never render squad-dependent UI before queries resolve.
+  if (authLoading || mySquad === undefined || myStats === undefined) {
+    return (
+      <AppNav>
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <Loader2 className="text-muted-foreground size-8 animate-spin" />
+        </div>
+      </AppNav>
+    );
+  }
+
+  const stats = myStats ?? {
+    totalPoints: 0,
+    lastMatchPoints: 0,
+    rank: null,
+    managerCount: 0,
+  };
+
+  const role = user?.role ?? "manager";
+  const isAdmin = role === "super_admin" || role === "moderator";
 
   const completed = (matches ?? []).filter((m) => m.status === "completed");
   const upcoming = (matches ?? []).filter((m) => m.status !== "completed");
@@ -65,21 +91,32 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-muted-foreground text-sm font-medium">
-              {user?.role === "super_admin"
-                ? "Super Admin console"
-                : user?.role === "moderator"
-                  ? "Moderator console"
-                  : "Manager dashboard"}
+            <p className="text-muted-foreground flex items-center gap-1.5 text-sm font-medium">
+              {role === "super_admin" ? (
+                <>
+                  <Crown className="text-primary size-3.5" /> Super Admin console
+                </>
+              ) : role === "moderator" ? (
+                <>
+                  <Shield className="text-primary size-3.5" /> Moderator console
+                </>
+              ) : (
+                "Manager dashboard"
+              )}
             </p>
             <h1 className="font-display text-3xl font-bold tracking-tight">
               {user?.teamName ?? `Welcome, ${user?.username}`}
             </h1>
           </div>
           <div className="flex gap-2">
+            {isAdmin && (
+              <Button variant="outline" onClick={() => navigate("/admin")}>
+                <Shield className="mr-1.5 size-4" /> Admin panel
+              </Button>
+            )}
             <Button onClick={() => navigate("/squad")}>
               <Users className="mr-1.5 size-4" />
-              {mySquad ? "Edit squad" : "Pick your squad"}
+              {mySquad ? "Edit squad" : "Create squad"}
             </Button>
             <Button variant="outline" onClick={() => navigate("/tournament")}>
               <Trophy className="mr-1.5 size-4" /> Tournament
@@ -92,29 +129,29 @@ export default function Dashboard() {
           <StatCard
             icon={<Star className="size-4" />}
             label="Total points"
-            value={String(myStats?.totalPoints ?? 0)}
+            value={String(stats.totalPoints)}
           />
           <StatCard
             icon={<Flame className="size-4" />}
             label="Last match"
-            value={String(myStats?.lastMatchPoints ?? 0)}
+            value={String(stats.lastMatchPoints)}
           />
           <StatCard
             icon={<BarChart3 className="size-4" />}
             label="Global rank"
             value={
-              myStats?.rank
-                ? `#${myStats.rank} of ${myStats.managerCount}`
-                : `of ${myStats?.managerCount ?? 0} managers`
+              stats.rank
+                ? `#${stats.rank} of ${stats.managerCount}`
+                : `of ${stats.managerCount} managers`
             }
           />
           <StatCard
             icon={<Users className="size-4" />}
-            label="Squad value"
+            label={mySquad ? "Squad value" : "Starting budget"}
             value={
               mySquad
                 ? formatMoney(mySquad.totalSpent)
-                : `Budget ${formatMoney(config?.budget ?? 100_000_000)}`
+                : formatMoney(config?.budget ?? 100_000_000)
             }
           />
         </div>
@@ -125,12 +162,14 @@ export default function Dashboard() {
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <div>
                 <CardTitle className="font-display text-lg font-bold uppercase tracking-wide">
-                  My squad
+                  {mySquad ? "My squad" : isAdmin ? "No squad yet" : "My squad"}
                 </CardTitle>
                 <CardDescription>
                   {mySquad
                     ? `${squadPlayers.length}/7 picked · Captain starred`
-                    : "You haven't picked a squad yet"}
+                    : isAdmin
+                      ? "You're an admin — build a squad to join the fantasy league, or run the tournament from the admin panel."
+                      : "You haven't picked a squad yet — draft your seven to start earning points."}
                 </CardDescription>
               </div>
               <Button variant="outline" size="sm" onClick={() => navigate("/squad")}>

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireUser, getPlatformConfig, getSquadForUser } from "./lib";
 import { formatMoney } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -13,12 +14,21 @@ const REQUIRED_FORMATION: Record<string, number> = {
 
 export type SquadPlayer = Doc<"players">;
 
+/**
+ * Returns the signed-in user's squad, or `null` when there isn't one.
+ * Never throws: not-signed-in (including the brief auth-attachment race on
+ * mount) and missing accounts both yield `null` so the client can render an
+ * empty state instead of crashing on a rejected query.
+ */
 export const getMySquad = query({
   args: {},
   handler: async (ctx) => {
-    const user = await requireUser(ctx);
-    const squad = await getSquadForUser(ctx, user._id);
-    if (!squad) return null;
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return null; // not signed in (yet)
+    const user = await ctx.db.get(userId);
+    if (!user) return null; // account no longer exists
+    const squad = await getSquadForUser(ctx, userId);
+    if (!squad) return null; // no squad built yet (e.g. admins)
     const players = await Promise.all(squad.playerIds.map((id) => ctx.db.get(id)));
     const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
     return {
@@ -30,12 +40,13 @@ export const getMySquad = query({
   },
 });
 
-/** Players in the current user's squad (used by match-center PotM display). */
+/** Points the signed-in user's squad earned from one match (null-safe). */
 export const getSquadPointsByMatch = query({
   args: { matchId: v.id("matches") },
   handler: async (ctx, { matchId }) => {
-    const user = await requireUser(ctx);
-    const squad = await getSquadForUser(ctx, user._id);
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return { squadId: null, points: 0 };
+    const squad = await getSquadForUser(ctx, userId);
     if (!squad) return { squadId: null, points: 0 };
     const all = await ctx.db
       .query("matchScores")
