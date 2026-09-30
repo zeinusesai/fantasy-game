@@ -24,6 +24,18 @@ export default function Tournament() {
   const thirdPlace = byStage("third_place")[0];
   const semis = [...byStage("semifinal1"), ...byStage("semifinal2")];
 
+  // Automatic progression: winners of the semis advance to the Final,
+  // losers drop to the 3rd place match — shown as soon as both are done.
+  const completedSemis = semis.filter((m) => m.status === "completed");
+  const winnerOf = (m: (typeof semis)[number]) =>
+    m.homeGoals >= m.awayGoals ? m.homeHouse : m.awayHouse;
+  const loserOf = (m: (typeof semis)[number]) =>
+    m.homeGoals >= m.awayGoals ? m.awayHouse : m.homeHouse;
+  const finalists =
+    completedSemis.length === 2 ? completedSemis.map(winnerOf) : null;
+  const bronzeTeams =
+    completedSemis.length === 2 ? completedSemis.map(loserOf) : null;
+
   const completed = (matches ?? []).filter((m) => m.status === "completed");
   const champion =
     finalMatch?.status === "completed"
@@ -69,11 +81,23 @@ export default function Tournament() {
             </p>
             {finalMatch ? (
               <MatchCard match={finalMatch} highlight onClick={() => navigate(`/match/${finalMatch._id}`)} />
+            ) : finalists ? (
+              <div className="flex items-center justify-between gap-2 rounded-2xl border border-dashed border-primary/40 bg-primary/5 p-4">
+                <span className="flex items-center gap-2 font-semibold">
+                  <HouseCrest house={finalists[0]} size={28} /> {finalists[0]}
+                </span>
+                <span className="font-score text-muted-foreground text-xs font-bold uppercase">Next up</span>
+                <span className="flex items-center gap-2 font-semibold">
+                  {finalists[1]} <HouseCrest house={finalists[1]} size={28} />
+                </span>
+              </div>
             ) : (
               <EmptyCard text="Winners of the semifinals meet here." />
             )}
             <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-center text-xs text-primary">
-              Semifinal winners advance automatically
+              {finalists
+                ? `${finalists[0]} vs ${finalists[1]} — awaiting fixture from the Super Admin`
+                : "Semifinal winners advance automatically"}
             </div>
           </div>
 
@@ -84,6 +108,16 @@ export default function Tournament() {
             </p>
             {thirdPlace ? (
               <MatchCard match={thirdPlace} onClick={() => navigate(`/match/${thirdPlace._id}`)} />
+            ) : bronzeTeams ? (
+              <div className="flex items-center justify-between gap-2 rounded-2xl border border-dashed border-border bg-secondary/30 p-4">
+                <span className="flex items-center gap-2 font-semibold">
+                  <HouseCrest house={bronzeTeams[0]} size={28} /> {bronzeTeams[0]}
+                </span>
+                <span className="font-score text-muted-foreground text-xs font-bold uppercase">Next up</span>
+                <span className="flex items-center gap-2 font-semibold">
+                  {bronzeTeams[1]} <HouseCrest house={bronzeTeams[1]} size={28} />
+                </span>
+              </div>
             ) : (
               <EmptyCard text="Semifinal losers drop into this match." />
             )}
