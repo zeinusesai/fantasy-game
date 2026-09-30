@@ -175,6 +175,12 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
     }
   };
 
+  // House/position come from constrained Selects with defaults, so validity
+  // reduces to a non-empty name and a parseable price. Disable submit until
+  // both are valid — no empty/NaN mutations can ever be fired.
+  const addReady = name.trim().length >= 2 && parseMoneyInput(price) !== null;
+  const priceInvalid = price.trim() !== "" && parseMoneyInput(price) === null;
+
   const startEdit = (p: { _id: Id<"players">; name: string; house: House; position: Position; price: number }) => {
     setEditing(p._id);
     setEditName(p.name);
@@ -266,11 +272,17 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               placeholder="e.g. 12m, 9.5m or 8500000"
+              aria-invalid={priceInvalid}
             />
+            <p className={`text-xs ${priceInvalid ? "text-destructive" : "text-muted-foreground"}`}>
+              {priceInvalid
+                ? "Invalid amount — use 12m, 9.5m, 850k or a plain number."
+                : "Supports 12m, 9.5m, 850k or raw numbers."}
+            </p>
           </div>
-          <Button onClick={handleAdd} disabled={adding} className="w-full">
+          <Button onClick={handleAdd} disabled={adding || !addReady} className="w-full">
             {adding ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Plus className="mr-1.5 size-4" />}
-            Add player
+            {addReady ? "Add player" : "Enter name and price to add"}
           </Button>
         </CardContent>
       </Card>
@@ -339,7 +351,17 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button size="sm" variant="outline" onClick={handleUpdate}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleUpdate}
+                              disabled={!editName.trim() || parseMoneyInput(editPrice) === null}
+                              title={
+                                !editName.trim() || parseMoneyInput(editPrice) === null
+                                  ? "Enter a valid name and price first"
+                                  : "Save changes"
+                              }
+                            >
                               <Save className="size-3.5" />
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>

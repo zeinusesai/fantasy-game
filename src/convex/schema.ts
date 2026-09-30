@@ -90,6 +90,9 @@ const schema = defineSchema(
       position: positionValidator, // GK | DEF | MID | FWD
       price: v.number(), // player value in $
       active: v.boolean(),
+      // Loose per-player stats container (goals/assists/apps history, etc.) —
+      // optional so inserting a player never fails over missing/extra stats.
+      stats: v.optional(v.any()),
     })
       .index("by_house", ["house"])
       .index("by_position", ["position"])

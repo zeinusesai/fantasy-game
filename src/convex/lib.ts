@@ -1,5 +1,6 @@
 import type { QueryCtx, MutationCtx } from "./_generated/server";
 import { internalQuery, internalMutation } from "./_generated/server";
+import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { DEFAULT_CONFIG, CONFIG_KEYS } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -30,17 +31,11 @@ export async function getPlatformConfig(ctx: QueryCtx | MutationCtx) {
 }
 
 export async function requireUser(ctx: QueryCtx | MutationCtx) {
-  const userId = await getAuthUserIdFromCtx(ctx);
+  const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error("Must be signed in.");
   const user = await ctx.db.get(userId);
   if (!user) throw new Error("Account no longer exists.");
   return user;
-}
-
-// getAuthUserId helper that works in both query and mutation contexts.
-async function getAuthUserIdFromCtx(ctx: QueryCtx | MutationCtx) {
-  const { getAuthUserId } = await import("@convex-dev/auth/server");
-  return getAuthUserId(ctx);
 }
 
 export async function requireSuperAdmin(ctx: QueryCtx | MutationCtx) {
