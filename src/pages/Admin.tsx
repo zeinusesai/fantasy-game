@@ -62,7 +62,9 @@ import {
   Shield,
   SlidersHorizontal,
   Trash2,
+  UserCog,
   Users2,
+  Wrench,
   XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -131,6 +133,8 @@ export default function Admin() {
     );
   }
 
+  const [tab, setTab] = useState("players");
+
   return (
     <AppNav>
       <div className="space-y-6">
@@ -154,7 +158,7 @@ export default function Admin() {
           )}
         </div>
 
-        <Tabs defaultValue="players">
+        <Tabs value={tab} onValueChange={setTab} defaultValue="players">
           <TabsList>
             <TabsTrigger value="players">Players</TabsTrigger>
             <TabsTrigger value="requests" className="gap-1.5">
@@ -165,6 +169,11 @@ export default function Admin() {
                 </Badge>
               )}
             </TabsTrigger>
+            {isSuper && (
+              <TabsTrigger value="roles" className="gap-1.5">
+                <UserCog className="size-3.5" /> Roles
+              </TabsTrigger>
+            )}
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
             {isSuper && <TabsTrigger value="users">Users</TabsTrigger>}
             {isSuper && <TabsTrigger value="settings">Settings</TabsTrigger>}
@@ -186,6 +195,9 @@ export default function Admin() {
           </TabsContent>
           {isSuper && (
             <>
+              <TabsContent value="roles" className="mt-4">
+                <RolesTab />
+              </TabsContent>
               <TabsContent value="matches" className="mt-4">
                 <MatchesTab />
               </TabsContent>
@@ -193,7 +205,10 @@ export default function Admin() {
                 <UsersTab />
               </TabsContent>
               <TabsContent value="settings" className="mt-4">
-                <SettingsTab />
+                <SettingsTab onOpenMaintenance={() => setTab("maintenance")} />
+              </TabsContent>
+              <TabsContent value="maintenance" className="mt-4">
+                <MaintenanceCard />
               </TabsContent>
             </>
           )}
@@ -1076,7 +1091,7 @@ function UsersTab() {
 
 // ── Settings tab (super admin only) ──────────────────────────────────────
 
-function SettingsTab() {
+function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
   const config = useQuery(api.config.getConfig);
   const setBudget = useMutation(api.config.setBudget);
   const setHouseLimit = useMutation(api.config.setHouseLimit);
@@ -1196,6 +1211,23 @@ function SettingsTab() {
               Default is 3 — forces balanced picks across the four houses.
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* System controls — maintenance mode lives in its own tab */}
+      <Card className="border-border/80 lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+            <Wrench className="text-primary size-4" /> System controls
+          </CardTitle>
+          <CardDescription>
+            Lock the platform for everyone except staff while you make changes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" onClick={onOpenMaintenance}>
+            <Wrench className="mr-1.5 size-4" /> Open maintenance mode controls
+          </Button>
         </CardContent>
       </Card>
 
@@ -1487,6 +1519,174 @@ function AnnouncementCard() {
             </Button>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── User roles & permissions tab (super admin only) ──────────────────
+
+function RolesTab() {
+  const usersResult = useQuery(api.usersAdmin.listAllUsersWithRoles);
+  const updateUserRole = useMutation(api.usersAdmin.updateUserRole);
+  const users = usersResult ?? [];
+  const loading = usersResult === undefined;
+  const [busyId, setBusyId] = useState<Id<"users"> | null>(null);
+
+  const changeRole = async (targetUserId: Id<"users">, newRole: string) => {
+    setBusyId(targetUserId);
+    try {
+      await updateUserRole({ targetUserId, newRole });
+      toast.success(`Role updated to ${newRole}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the role.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <Card className="border-border/80">
+      <CardHeader>
+        <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+          <UserCog className="text-primary size-4" /> User roles & permissions
+        </CardTitle>
+        <CardDescription>
+          Assign platform roles: super_admin (full control), admin (moderator
+          scope) or user (standard manager). You cannot demote the last Super
+          Admin.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+            <Loader2 className="size-4 animate-spin" /> Loading users…
+          </p>
+        ) : users.length === 0 ? (
+          <p className="text-muted-foreground py-8 text-center text-sm">
+            No registered users found.
+          </p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Manager</TableHead>
+                <TableHead>Team</TableHead>
+                <TableHead>Current role</TableHead>
+                <TableHead className="text-right">Change role</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map((u) => (
+                <TableRow key={u._id}>
+                  <TableCell className="font-semibold">@{u.username ?? "—"}</TableCell>
+                  <TableCell>{u.teamName ?? "—"}</TableCell>
+                  <TableCell>
+                    {u.role === "super_admin" ? (
+                      <Badge className="bg-primary text-primary-foreground gap-1">
+                        <Crown className="size-3" /> Super Admin
+                      </Badge>
+                    ) : u.role === "moderator" ? (
+                      <Badge variant="outline" className="gap-1">
+                        <Shield className="size-3" /> Admin
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">User</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Select
+                      value={u.role ?? "user"}
+                      onValueChange={(v) => changeRole(u._id, v)}
+                      disabled={busyId === u._id}
+                    >
+                      <SelectTrigger className="ml-auto h-8 w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="super_admin">Super Admin</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="user">User</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Maintenance mode controls (super admin only) ─────────────────────
+
+function MaintenanceCard() {
+  const statusResult = useQuery(api.system.getMaintenanceStatus);
+  const toggleMaintenanceMode = useMutation(api.system.toggleMaintenanceMode);
+  const [busy, setBusy] = useState(false);
+
+  // Safe fallback while loading — never render from `undefined`.
+  const status = statusResult ?? { isMaintenanceMode: false };
+  const active = status.isMaintenanceMode === true;
+
+  const toggle = async (next: boolean) => {
+    setBusy(true);
+    try {
+      await toggleMaintenanceMode({ isMaintenanceMode: next === true });
+      toast.success(
+        next
+          ? "Maintenance mode is ON — standard users now see the lock screen."
+          : "Maintenance mode is OFF — the platform is open to everyone.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not toggle maintenance mode.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  
+  return (
+    <Card className={cn("border", active ? "border-amber-400/50 bg-amber-400/5" : "border-border/80")}>
+      <CardHeader>
+        <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+          <Wrench className="text-primary size-4" /> Maintenance mode
+        </CardTitle>
+        <CardDescription>
+          Locks the whole platform for standard users with an animated lock
+          screen. Super Admin and admins keep full access and see a pulsing
+          warning banner in the header.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold">
+              Status: {" "}
+              {active ? (
+                <span className="text-amber-300">⚠️ ACTIVE</span>
+              ) : (
+                <span className="text-emerald-400">Operational</span>
+              )}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              {active
+                ? "Non-staff visitors are blocked at the root layout."
+                : "Everyone can browse, draft squads and view the bracket."}
+            </p>
+          </div>
+          <Switch
+            checked={active}
+            onCheckedChange={(v) => toggle(v === true)}
+            disabled={busy || statusResult === undefined}
+          />
+        </div>
+        <p className="text-muted-foreground text-xs">
+          Tip: staff who were signed out can still reach the sign-in page from
+          the lock screen and pass the gate by role.
+          {busy && <Loader2 className="ml-1.5 inline size-3 animate-spin" />}
+        </p>
       </CardContent>
     </Card>
   );

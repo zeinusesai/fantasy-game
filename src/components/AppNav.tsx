@@ -12,7 +12,10 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import {
+  AlertTriangle,
   BarChart3,
   Crown,
   LayoutDashboard,
@@ -41,6 +44,10 @@ export function AppNav({ children }: { children: ReactNode }) {
   const avatar = user?.image?.startsWith("data:") || user?.image?.startsWith("http")
     ? user.image
     : avatarPresetUrl(user?.image);
+
+  // Maintenance flag — safe default while loading / when unset.
+  const statusResult = useQuery(api.system.getMaintenanceStatus);
+  const isMaintenanceMode = statusResult?.isMaintenanceMode === true;
 
   const handleSignOut = async () => {
     await signOut();
@@ -141,6 +148,22 @@ export function AppNav({ children }: { children: ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* Pulsing banner — staff only, and only while maintenance is active. */}
+        {isMaintenanceMode && isAdmin && (
+          <div className="border-b border-amber-400/40 bg-amber-400/15 backdrop-blur-md">
+            <div className="mx-auto flex w-full max-w-7xl items-center justify-center gap-2 px-4 py-1.5">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-60" />
+                <span className="relative inline-flex size-2 rounded-full bg-amber-400" />
+              </span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-300">
+                ⚠️ Maintenance Mode Active
+              </span>
+              <AlertTriangle className="size-3 text-amber-300" />
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6">{children}</main>

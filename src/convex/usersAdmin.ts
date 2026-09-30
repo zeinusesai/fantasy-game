@@ -40,6 +40,17 @@ async function safeUserListViewer(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   }
 }
 
+/**
+ * Maps any stored role (including legacy values like "admin"/"user") to one
+ * of the platform's three canonical roles, so role comparisons downstream
+ * never see an unexpected string.
+ */
+function normalizeRole(role: string | null | undefined) {
+  if (role === "super_admin") return "super_admin";
+  if (role === "moderator" || role === "admin") return "moderator";
+  return "manager";
+}
+
 /** Lists all users for the Super Admin. Empty array when unauthorized. */
 export const listUsers = query({
   args: {},
@@ -60,6 +71,106 @@ export const listUsers = query({
     } catch {
       // Never bubble storage errors into a rejected query.
       return [];
+    }
+  },
+});
+
+/**
+ * RBAC view of every registered user with their platform role.
+ * Super Admin (Zein) only — anyone else gets `[]` so the admin tab renders
+ * a clean empty state instead of surfacing an auth error in the client.
+ */
+export const listAllUsersWithRoles = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const caller = await getAuthUserId(ctx);
+      if (caller === null) return [];
+      const me = await ctx.db.get(caller);
+      if (!me || me.role !== "super_admin") return [];
+
+      const users = await ctx.db.query("users").collect();
+      return users
+        .map((u) => ({
+          _id: u._id,
+          username: u.username ?? null,
+          teamName: u.teamName ?? null,
+          role: normalizeRole(u.role),
+        }))
+        .sort((a, b) => (a.username ?? "").localeCompare(b.username ?? ""));
+    } catch {
+      return [];
+    }
+  },
+});
+
+/**
+ * Assign a role to a user. Super Admin (Zein) only. Accepts the external
+ * role names ("super_admin" | "admin" | "user"), validates them, then maps
+ * to the platform's stored roles ("admin" -> "moderator"). Cannot be used to
+ * demote the last remaining Super Admin — locks Zein out of the panel.
+ */
+export const updateUserRole = mutation({
+  args: { targetUserId: v.id("users"), newRole: v.string() },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Only the Super Admin can change user roles.",
+      );
+    }
+
+    // Explicit parsing/validation of client input before any DB access.
+    const raw =
+      typeof args.newRole === "string" ? args.newRole.trim().toLowerCase() : "";
+    const ROLE_MAP: Record<
+      string,
+      "super_admin" | "moderator" | "manager" | undefined
+    > = {
+      super_admin: "super_admin",
+      admin: "moderator",
+      user: "manager",
+    };
+    const platformRole = ROLE_MAP[raw];
+    if (!platformRole) {
+      throw new Error(
+        `Invalid role "${raw}" — must be super_admin, admin or user.`,
+      );
+    }
+
+    try {
+      const target = await ctx.db.get(args.targetUserId);
+      if (!target) throw new Error("User not found.");
+
+      // Guard: never remove the last super admin.
+      if (
+        target.role === "super_admin" &&
+        platformRole !== "super_admin"
+      ) {
+        const supers = (await ctx.db.query("users").collect()).filter(
+          (u) => u.role === "super_admin",
+        );
+        if (supers.length <= 1) {
+          throw new Error(
+            "Cannot demote the last Super Admin — promote another admin first.",
+          );
+        }
+      }
+
+      await ctx.db.patch(args.targetUserId, { role: platformRole });
+      return { role: platformRole };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message.length > 0 &&
+        !err.message.startsWith("Uncaught")
+      ) {
+        throw err; // rethrow clean validation messages untouched
+      }
+      throw new Error("Could not update the user's role — please try again.");
     }
   },
 });

@@ -187,6 +187,11 @@ const schema = defineSchema(
       .index("by_status", ["status"])
       .index("by_player", ["playerId"])
       .index("by_user", ["userId"]),
+
+    // ===== System-level flags (singleton row) =====
+    systemConfig: defineTable({
+      isMaintenanceMode: v.boolean(),
+    }),
   },
   {
     schemaValidation: false,

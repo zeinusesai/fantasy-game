@@ -5,6 +5,7 @@ import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import { OwnershipWatermark } from "@/components/OwnershipWatermark";
+import { MaintenanceGate } from "@/components/MaintenanceGate";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
@@ -136,7 +137,8 @@ createRoot(document.getElementById("root")!).render(
       <ConvexAuthProvider client={convex}>
         <BrowserRouter>
           <OwnershipWatermark /> {/* Ownership watermark on every view — do not remove */}
-          <RouteSyncer />
+          <MaintenanceGate>
+            <RouteSyncer />
           <AdminSeedTrigger />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
@@ -192,6 +194,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
+          </MaintenanceGate>
         </BrowserRouter>
         <Toaster />
       </ConvexAuthProvider>
