@@ -40,6 +40,54 @@ export const getMySquad = query({
   },
 });
 
+/**
+ * Most-picked player across all fantasy squads (popularity aggregation).
+ * Null-safe: returns null when there are no squads, no picks or the top
+ * player was deleted — the UI renders no badge instead of crashing.
+ */
+export const getMostPickedPlayer = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      if (squads.length === 0) return null;
+
+      const counts = new Map<string, number>();
+      for (const squad of squads) {
+        for (const pid of squad.playerIds ?? []) {
+          counts.set(String(pid), (counts.get(String(pid)) ?? 0) + 1);
+        }
+      }
+      if (counts.size === 0) return null;
+
+      let topId: string | null = null;
+      let topCount = 0;
+      for (const [pid, count] of counts) {
+        if (count > topCount) {
+          topId = pid;
+          topCount = count;
+        }
+      }
+      if (!topId) return null;
+
+      const player = await ctx.db.get(topId as Id<"players">);
+      if (!player) return null; // deleted player — no badge
+
+      // Guarded percentage: squads.length >= 1 here, so no division by zero.
+      const percentage = Math.round((topCount / squads.length) * 100);
+      return {
+        playerId: player._id,
+        playerName: player.name,
+        house: player.house,
+        pickCount: topCount,
+        percentage,
+      };
+    } catch {
+      return null;
+    }
+  },
+});
+
 /** Points the signed-in user's squad earned from one match (null-safe). */
 export const getSquadPointsByMatch = query({
   args: { matchId: v.id("matches") },

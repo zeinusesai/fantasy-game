@@ -92,6 +92,15 @@ class RootErrorBoundary extends React.Component<
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
+/** Enable install-to-home-screen (PWA) — network-first SW, zero caching risk. */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* SW is a progressive enhancement — ignore failures silently. */
+    });
+  });
+}
+
 
 
 /** Fires once on load: idempotently seeds the pre-registered admin accounts. */

@@ -80,6 +80,7 @@ const schema = defineSchema(
       teamName: v.optional(v.string()), // fantasy team display name
       profilePic: v.optional(v.string()), // optional profile photo (alias of image)
       budget: v.optional(v.number()), // remaining budget in $ (millions as plain numbers)
+      favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
       .index("by_username", ["username"]),

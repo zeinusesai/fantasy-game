@@ -3,16 +3,18 @@
 import type { Position } from "./schema";
 
 export const SCORING_RULES = {
-  goalByPosition: { GK: 6, DEF: 6, MID: 5, FWD: 4 },
+  goalByPosition: { GK: 6, DEF: 6, MID: 5, FWD: 5 },
   assist: 3,
   cleanSheetGkDef: 4,
-  savesPerPoint: 3, // every 3 saves = 1 pt
+  savesPerPoint: 2, // every 2 saves = 1 pt
   yellowCard: -1,
   redCard: -3,
   ownGoal: -2,
   potmBonus: 3,
-  ratingBonusThreshold: 8.0,
-  ratingBonusPoints: 2, // rating >= 8.0 earns +2
+  ratingBonus8Threshold: 8.0,
+  ratingBonus8Points: 2, // rating >= 8.0 earns +2
+  ratingBonus9Threshold: 9.0,
+  ratingBonus9Points: 3, // rating >= 9.0 earns +3 (instead of +2)
 } as const;
 
 export type MatchPlayerStats = {
@@ -44,9 +46,15 @@ export function computePlayerPoints(stats: MatchPlayerStats): number {
   if (
     stats.rating !== undefined &&
     stats.rating !== null &&
-    stats.rating >= SCORING_RULES.ratingBonusThreshold
+    stats.rating >= SCORING_RULES.ratingBonus9Threshold
   ) {
-    pts += SCORING_RULES.ratingBonusPoints;
+    pts += SCORING_RULES.ratingBonus9Points;
+  } else if (
+    stats.rating !== undefined &&
+    stats.rating !== null &&
+    stats.rating >= SCORING_RULES.ratingBonus8Threshold
+  ) {
+    pts += SCORING_RULES.ratingBonus8Points;
   }
   return pts;
 }

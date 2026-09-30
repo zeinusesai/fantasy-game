@@ -198,4 +198,34 @@
   [role="button"]:not([disabled]) {
     cursor: pointer;
   }
+
+  /* ── Mobile / tablet touch ergonomics ──
+     Interactive targets meet the ~44px touch guideline on small screens via
+     padded hit areas (no layout change on desktop). Radix state-data
+     selectors cover Tabs/Select/Dropdown triggers. */
+  @media (pointer: coarse) and (max-width: 640px) {
+    button:not([disabled]),
+    [role="button"]:not([disabled]),
+    [role="tab"],
+    [data-slot="select-item"],
+    [data-radix-collection-item] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    /* Dense stat-line rows in match/squad UIs get a taller tap area via
+       padding instead of height so text alignment stays intact. */
+    label:has(input[type="radio"]),
+    label:has(input[type="checkbox"]) {
+      min-height: 44px;
+    }
+  }
+
+  /* Zero horizontal overflow: long words/ids wrap or clip instead of
+     stretching the page on narrow screens. */
+  html,
+  body {
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
 }

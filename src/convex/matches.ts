@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, type MutationCtx } from "./_generated/server";
 import { requireSuperAdmin } from "./lib";
 import {
   houseValidator,
@@ -7,6 +7,7 @@ import {
   matchStatusValidator,
   STAGES,
 } from "./schema";
+import type { Position } from "./schema";
 import { computePlayerPoints } from "./points";
 import type { Id } from "./_generated/dataModel";
 
@@ -115,6 +116,8 @@ export const setMatchDate = mutation({
         matchDate: matchDate || undefined,
         ...(matchDate ? { kickoffLabel: matchDate } : {}),
       });
+      // Date changes don't affect points, but keep the engine in sync.
+      await recalculateMatchPoints(ctx, args.matchId);
       return { matchDate };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -176,6 +179,8 @@ export const setLineups = mutation({
           awayStarters: args.awayStarters,
         },
       });
+      // Lineups affect clean-sheet eligibility once completed.
+      await recalculateMatchPoints(ctx, args.matchId);
       return { home: args.homeStarters.length, away: args.awayStarters.length };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -261,6 +266,8 @@ export const logTimelineEvent = mutation({
             : { awayGoals: match.awayGoals + 1 }
           : {}),
       });
+      // Live points: leaderboards update the moment the event lands.
+      await recalculateMatchPoints(ctx, args.matchId);
       return { eventId: event.id };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -301,6 +308,7 @@ export const removeTimelineEvent = mutation({
         }
       }
       await ctx.db.patch(args.matchId, patch);
+      await recalculateMatchPoints(ctx, args.matchId);
       return { removed: true };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -378,6 +386,7 @@ export const setPlayerRatings = mutation({
       }
 
       await ctx.db.patch(args.matchId, { playerRatings: rows });
+      await recalculateMatchPoints(ctx, args.matchId);
       return { count: rows.length };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -417,6 +426,7 @@ export const setPotmPlayer = mutation({
         }
       }
       await ctx.db.patch(args.matchId, { potmPlayerId: args.playerId });
+      await recalculateMatchPoints(ctx, args.matchId);
       return { ok: true };
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -652,5 +662,164 @@ export const saveMatch = mutation({
     }
 
     return matchId;
+  },
+});
+
+// ── Live FPL points engine ───────────────────────────────────────────────
+
+/**
+ * Recompute the fantasy-points distribution for one match from its
+ * Match Center data (ratings rows carry the per-player stat lines) and
+ * rewrite the matchScores table. Called automatically whenever an admin
+ * edits events, ratings, PotM or status — so leaderboards update live.
+ *
+ * Defensive by construction: empty ratings/squads are valid no-op states,
+ * and player docs deleted mid-tournament are skipped, never crashed on.
+ */
+async function recalculateMatchPoints(
+  ctx: MutationCtx,
+  matchId: Id<"matches">,
+): Promise<number> {
+  const match = await ctx.db.get(matchId);
+  if (!match) return 0;
+
+  // Per-player aggregate stat lines, assembled defensively. Ratings rows are
+  // the primary source; timeline events contribute counts for players who
+  // have no rating row yet (early live state).
+  const agg = new Map<
+    string,
+    {
+      position: Position;
+      rating: number | null;
+      goals: number;
+      assists: number;
+      yellowCards: number;
+      redCards: number;
+      saves: number;
+      ownGoals: number;
+      cleanSheet: boolean;
+      potm: boolean;
+    }
+  >();
+  const blank = () => ({
+    position: "MID" as Position,
+    rating: null as number | null,
+    goals: 0,
+    assists: 0,
+    yellowCards: 0,
+    redCards: 0,
+    saves: 0,
+    ownGoals: 0,
+    cleanSheet: false,
+    potm: false,
+  });
+
+  for (const r of match.playerRatings ?? []) {
+    const row = agg.get(String(r.playerId)) ?? blank();
+    const player = await ctx.db.get(r.playerId);
+    if (player) row.position = player.position;
+    const rating = Number(r.rating);
+    row.rating = Number.isFinite(rating) ? rating : null;
+    row.goals += Number(r.goals) || 0;
+    row.assists += Number(r.assists) || 0;
+    row.saves += Number(r.saves) || 0;
+    row.yellowCards += Number(r.yellowCards) || 0;
+    row.redCards += Number(r.redCards) || 0;
+    agg.set(String(r.playerId), row);
+  }
+
+  for (const ev of match.timelineEvents ?? []) {
+    const row = agg.get(String(ev.playerId)) ?? blank();
+    const player = await ctx.db.get(ev.playerId);
+    if (player) row.position = player.position;
+    if (ev.type === "goal") row.goals += 1;
+    else if (ev.type === "yellow_card") row.yellowCards += 1;
+    else if (ev.type === "red_card") row.redCards += 1;
+    if (ev.assistPlayerId) {
+      const aRow = agg.get(String(ev.assistPlayerId)) ?? blank();
+      const aPlayer = await ctx.db.get(ev.assistPlayerId);
+      if (aPlayer) aRow.position = aPlayer.position;
+      aRow.assists += 1;
+      agg.set(String(ev.assistPlayerId), aRow);
+    }
+    agg.set(String(ev.playerId), row);
+  }
+
+  // Clean sheets: only when the match is completed and the player's house
+  // conceded zero goals (7-a-side: no goals conceded → CS for GK/DEF).
+  if (match.status === "completed") {
+    const homeClean = match.awayGoals === 0;
+    const awayClean = match.homeGoals === 0;
+    const starters = [
+      ...(match.lineups?.homeStarters ?? []).map(String),
+      ...(match.lineups?.awayStarters ?? []).map(String),
+    ];
+    for (const pid of new Set(starters)) {
+      const row = agg.get(pid) ?? blank();
+      const player = await ctx.db.get(pid as Id<"players">);
+      if (player) {
+        row.position = player.position;
+        row.cleanSheet =
+          player.house === match.homeHouse ? homeClean : awayClean;
+      }
+      agg.set(pid, row);
+    }
+  }
+
+  // PotM bonus.
+  if (match.potmPlayerId) {
+    const row = agg.get(String(match.potmPlayerId)) ?? blank();
+    row.potm = true;
+    agg.set(String(match.potmPlayerId), row);
+  }
+
+  if (agg.size === 0) return 0; // nothing to distribute yet
+
+  // Compute per-player points via the shared scoring rules.
+  const pointsByPlayer = new Map<string, number>();
+  for (const [pid, stats] of agg) {
+    pointsByPlayer.set(pid, computePlayerPoints(stats));
+  }
+
+  // Rewrite the matchScores table (idempotent full refresh).
+  const old = await ctx.db
+    .query("matchScores")
+    .withIndex("by_match", (q) => q.eq("matchId", matchId))
+    .collect();
+  for (const s of old) await ctx.db.delete(s._id);
+
+  const squads = await ctx.db.query("squads").collect();
+  for (const squad of squads) {
+    let pts = 0;
+    for (const pid of squad.playerIds) {
+      const p = pointsByPlayer.get(String(pid));
+      if (p === undefined) continue;
+      pts += p;
+      if (squad.captainId === pid) pts += p; // captain 2x
+    }
+    await ctx.db.insert("matchScores", {
+      matchId,
+      squadId: squad._id,
+      userId: squad.userId,
+      points: pts,
+    });
+  }
+  return squads.length;
+}
+
+/** Public query so the UI can reflect the live points total for a match. */
+export const getMatchPointsTotal = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    try {
+      const rows = await ctx.db
+        .query("matchScores")
+        .withIndex("by_match", (q) => q.eq("matchId", matchId))
+        .collect();
+      const total = rows.reduce((sum, r) => sum + (Number(r.points) || 0), 0);
+      return { total, managers: rows.length };
+      } catch {
+      return { total: 0, managers: 0 };
+    }
   },
 });

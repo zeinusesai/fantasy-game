@@ -41,7 +41,11 @@ export default function SquadBuilder() {
   const playersResult = useQuery(api.players.listPlayers);
   const mySquadResult = useQuery(api.squads.getMySquad);
   const config = useQuery(api.config.getConfig);
+  const mostPickedResult = useQuery(api.squads.getMostPickedPlayer);
   const saveSquad = useMutation(api.squads.saveSquad);
+
+  // Popularity badge data — null-safe: no squads yet → no badge rendered.
+  const mostPicked = mostPickedResult ?? null;
 
   const players = playersResult ?? [];
   const mySquad = mySquadResult ?? null;
@@ -478,6 +482,11 @@ export default function SquadBuilder() {
                             {pendingReq && (
                               <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
                                 <Coins className="size-3" /> price review pending
+                              </span>
+                            )}
+                            {mostPicked && String(mostPicked.playerId) === String(p._id) && (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-orange-400/50 bg-orange-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200">
+                                🔥 MOST SELECTED · {mostPicked.percentage}%
                               </span>
                             )}
                           </div>

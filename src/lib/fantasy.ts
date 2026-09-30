@@ -47,8 +47,12 @@ export const SCORING_RULE_LINES: { label: string; points: string }[] = [
   { label: "Own goal", points: String(SCORING_RULES.ownGoal) },
   { label: "Player of the Match", points: `+${SCORING_RULES.potmBonus}` },
   {
-    label: `Match rating ≥ ${SCORING_RULES.ratingBonusThreshold.toFixed(1)}`,
-    points: `+${SCORING_RULES.ratingBonusPoints}`,
+    label: `Match rating ≥ ${SCORING_RULES.ratingBonus9Threshold.toFixed(1)}`,
+    points: `+${SCORING_RULES.ratingBonus9Points}`,
+  },
+  {
+    label: `Match rating ≥ ${SCORING_RULES.ratingBonus8Threshold.toFixed(1)}`,
+    points: `+${SCORING_RULES.ratingBonus8Points}`,
   },
   { label: "Captain", points: "×2" },
 ];

@@ -159,17 +159,32 @@ export const updateProfile = mutation({
   args: {
     teamName: v.string(),
     avatar: v.optional(v.string()),
+    favoritePlayerId: v.optional(v.string()),
   },
-  handler: async (ctx, { teamName, avatar }) => {
-    const user = await requireUser(ctx);
-    const trimmed = teamName.trim();
+  handler: async (ctx, { teamName, avatar, favoritePlayerId }) => {
+    let user;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to update your profile.",
+      );
+    }
+    const trimmed = typeof teamName === "string" ? teamName.trim() : "";
     if (trimmed.length < 2 || trimmed.length > 40) {
       throw new Error("Team name must be 2-40 characters.");
     }
-    await ctx.db.patch(user._id, {
-      teamName: trimmed,
-      ...(avatar !== undefined ? { image: avatar || undefined } : {}),
-    });
+    try {
+      await ctx.db.patch(user._id, {
+        teamName: trimmed,
+        ...(avatar !== undefined ? { image: avatar || undefined } : {}),
+        ...(favoritePlayerId !== undefined
+          ? { favoritePlayerId: favoritePlayerId || undefined }
+          : {}),
+      });
+    } catch {
+      throw new Error("Could not save your profile — please try again.");
+    }
   },
 });
 
@@ -181,18 +196,34 @@ export const getLeaderboard = query({
     const rows = await getLeaderboardRows(ctx);
     const users = await ctx.db.query("users").collect();
     const byId = new Map(users.map((u) => [u._id, u]));
-    return rows.map((row, i) => {
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
       const user = byId.get(row.userId);
-      return {
+      // Favorite player lookup — defensive: unset id, deleted player or any
+      // storage hiccup degrades to null (UI renders "N/A").
+      let favoritePlayerName: string | null = null;
+      const favId = user?.favoritePlayerId;
+      if (typeof favId === "string" && favId.length > 0) {
+        try {
+          favoritePlayerName =
+            (await ctx.db.get(favId as Id<"players">))?.name ?? null;
+        } catch {
+          favoritePlayerName = null;
+        }
+      }
+      out.push({
         rank: i + 1,
         userId: row.userId,
         username: user?.username ?? "?",
         teamName: user?.teamName ?? "Unnamed team",
         avatar: user?.image ?? null,
+        favoritePlayerName,
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,
-      };
-    });
+      });
+    }
+    return out;
   },
 });
 

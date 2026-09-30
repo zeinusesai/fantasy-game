@@ -16,7 +16,7 @@ import {
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import { BarChart3, Crown, Flame, Loader2, Medal, Trophy } from "lucide-react";
+import { BarChart3, Crown, Flame, Loader2, Medal, Star, Trophy } from "lucide-react";
 
 export default function Leaderboard() {
   const { user } = useAuth();
@@ -59,6 +59,7 @@ export default function Leaderboard() {
                     <TableHead className="w-20">Photo</TableHead>
                     <TableHead>Team</TableHead>
                     <TableHead>Manager</TableHead>
+                    <TableHead>Fav. player</TableHead>
                     <TableHead className="text-right">Last match</TableHead>
                     <TableHead className="text-right">Total points</TableHead>
                   </TableRow>
@@ -121,6 +122,17 @@ export default function Leaderboard() {
                           </span>
                         </TableCell>
                         <TableCell className="text-muted-foreground">@{row.username}</TableCell>
+                        <TableCell>
+                          {/* Strict fallback: unset favorite renders N/A, never blank/crash. */}
+                          {row.favoritePlayerName ? (
+                            <span className="flex items-center gap-1.5 text-sm font-medium">
+                              <Star className="size-3.5 shrink-0 text-amber-300" />
+                              {row.favoritePlayerName}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">N/A</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">
                           <span className="font-score inline-flex items-center gap-1 font-semibold">
                             <Flame className="size-3.5 text-primary" />

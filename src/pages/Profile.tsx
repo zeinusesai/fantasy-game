@@ -11,6 +11,13 @@ import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { AvatarPicker } from "@/components/AvatarPicker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { PageLoading } from "@/components/PageLoading";
@@ -31,15 +38,20 @@ export default function Profile() {
 
   const [teamName, setTeamName] = useState("");
   const [avatar, setAvatar] = useState<string>("");
+  const [favoritePlayerId, setFavoritePlayerId] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const playersResult = useQuery(api.players.listPlayers);
+  const playerChoices = playersResult ?? [];
 
   useEffect(() => {
     if (user && !loaded) {
       setTeamName(user.teamName ?? "");
       // Mirror the stored avatar value (preset id OR upload URL).
       setAvatar(user.image ?? "");
+      setFavoritePlayerId(user.favoritePlayerId ?? "");
       setLoaded(true);
     }
   }, [user, loaded]);
@@ -47,7 +59,10 @@ export default function Profile() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateProfile({ teamName: teamName.trim() });
+      await updateProfile({
+        teamName: teamName.trim(),
+        favoritePlayerId: favoritePlayerId || undefined,
+      });
       toast.success("Profile updated.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update profile.");
@@ -130,6 +145,29 @@ export default function Profile() {
                 onChange={(e) => setTeamName(e.target.value)}
                 maxLength={40}
               />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Favorite player</Label>
+              <Select
+                value={favoritePlayerId || "none"}
+                onValueChange={(v) => setFavoritePlayerId(v === "none" ? "" : v)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Pick your favorite player" />
+                </SelectTrigger>
+                <SelectContent className="max-h-64">
+                  <SelectItem value="none">None (N/A)</SelectItem>
+                  {playerChoices.map((p) => (
+                    <SelectItem key={p._id} value={String(p._id)}>
+                      {p.name} · {p.house} {p.position}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-xs">
+                Shown next to your team on the global leaderboard.
+              </p>
             </div>
 
             <div className="grid gap-2">
