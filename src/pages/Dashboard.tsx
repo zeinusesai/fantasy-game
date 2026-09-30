@@ -22,6 +22,7 @@ import {
   Crown,
   Flame,
   Loader2,
+  Megaphone,
   Shield,
   Star,
   Trophy,
@@ -56,6 +57,9 @@ export default function Dashboard() {
     rank: null,
     managerCount: 0,
   };
+
+  // Global announcement from the Super Admin ("" when none exists).
+  const adminMessage = config?.adminMessage ?? "";
 
   const role = user?.role ?? "manager";
   const isAdmin = role === "super_admin" || role === "moderator";
@@ -123,6 +127,19 @@ export default function Dashboard() {
             </Button>
           </div>
         </div>
+
+        {/* Global announcement banner (only rendered when the admin set one) */}
+        {adminMessage && (
+          <div className="flex items-start gap-3 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3">
+            <Megaphone className="text-primary mt-0.5 size-5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-primary text-[11px] font-bold uppercase tracking-widest">
+                Announcement
+              </p>
+              <p className="mt-0.5 text-sm font-medium whitespace-pre-wrap">{adminMessage}</p>
+            </div>
+          </div>
+        )}
 
         {/* Stat cards */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

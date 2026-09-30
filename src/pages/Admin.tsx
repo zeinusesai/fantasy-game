@@ -21,6 +21,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import {
   Table,
   TableBody,
   TableCell,
@@ -32,21 +41,29 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS, STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import type { House, Position, Stage } from "@/convex/schema";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { House, Position, RequestStatus, Stage } from "@/convex/schema";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
+
+type PriceRequest = Doc<"priceRequests">;
 import { toast } from "sonner";
 import {
+  CheckCircle2,
   Crown,
+  Inbox,
   KeyRound,
   Loader2,
   Lock,
+  Megaphone,
   Pencil,
   Plus,
   Save,
   Shield,
+  SlidersHorizontal,
   Trash2,
   Users2,
+  XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
@@ -56,6 +73,37 @@ export default function Admin() {
   const role = user?.role ?? "manager";
   const isSuper = role === "super_admin";
   const isModerator = role === "moderator";
+
+  // ── Price requests — live subscription, null-safe ([] while loading or
+  //    for viewers without access). Owned here so the header badge and the
+  //    Requests tab share one list. ──
+  const requestsResult = useQuery(api.requests.listPriceRequests);
+  const reviewPriceRequest = useMutation(api.requests.reviewPriceRequest);
+  const requests = requestsResult ?? [];
+  const requestsLoading = requestsResult === undefined;
+  const pendingCount = requests.filter((r) => r.status === "pending").length;
+
+  const [adjustFor, setAdjustFor] = useState<PriceRequest | null>(null);
+  const [adjustPrice, setAdjustPrice] = useState("");
+
+  const handleReview = async (
+    requestId: Id<"priceRequests">,
+    decision: "approve" | "deny" | "adjust",
+    customPrice?: number,
+  ) => {
+    try {
+      await reviewPriceRequest({ requestId, decision, customPrice });
+      toast.success(
+        decision === "deny"
+          ? "Request denied."
+          : decision === "adjust"
+            ? "Price adjusted — request approved with adjustment."
+            : "Price updated — request approved.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not record the decision.");
+    }
+  };
 
   // Wait for auth to resolve before judging access — otherwise a signed-in
   // admin briefly renders the "no permission" screen on first paint.
@@ -109,6 +157,14 @@ export default function Admin() {
         <Tabs defaultValue="players">
           <TabsList>
             <TabsTrigger value="players">Players</TabsTrigger>
+            <TabsTrigger value="requests" className="gap-1.5">
+              <Inbox className="size-3.5" /> Requests
+              {pendingCount > 0 && (
+                <Badge className="bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5">
+                  {pendingCount}
+                </Badge>
+              )}
+            </TabsTrigger>
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
             {isSuper && <TabsTrigger value="users">Users</TabsTrigger>}
             {isSuper && <TabsTrigger value="settings">Settings</TabsTrigger>}
@@ -116,6 +172,17 @@ export default function Admin() {
 
           <TabsContent value="players" className="mt-4">
             <PlayersTab canDelete={isSuper} />
+          </TabsContent>
+          <TabsContent value="requests" className="mt-4">
+            <RequestsTab
+              requests={requests}
+              loading={requestsLoading}
+              onReview={handleReview}
+              adjustFor={adjustFor}
+              setAdjustFor={setAdjustFor}
+              adjustPrice={adjustPrice}
+              setAdjustPrice={setAdjustPrice}
+            />
           </TabsContent>
           {isSuper && (
             <>
@@ -1079,6 +1146,9 @@ function SettingsTab() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      <div className="lg:col-span-2">
+        <AnnouncementCard />
+      </div>
       <Card className="card-sheen border-border/80">
         <CardHeader>
           <CardTitle className="font-display text-lg font-bold uppercase tracking-wide">
@@ -1145,6 +1215,280 @@ function SettingsTab() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ── Price requests tab (super admin + moderator) ─────────────────────────
+
+const REQUEST_STATUS_STYLES: Record<RequestStatus, string> = {
+  pending: "border-amber-400/40 bg-amber-400/15 text-amber-200",
+  approved: "border-emerald-400/40 bg-emerald-400/15 text-emerald-200",
+  adjusted: "border-sky-400/40 bg-sky-400/15 text-sky-200",
+  denied: "border-red-400/40 bg-red-400/15 text-red-200",
+};
+
+function RequestsTab({
+  requests,
+  loading,
+  onReview,
+  adjustFor,
+  setAdjustFor,
+  adjustPrice,
+  setAdjustPrice,
+}: {
+  requests: PriceRequest[];
+  loading: boolean;
+  onReview: (
+    requestId: Id<"priceRequests">,
+    decision: "approve" | "deny" | "adjust",
+    customPrice?: number,
+  ) => void;
+  adjustFor: PriceRequest | null;
+  setAdjustFor: (r: PriceRequest | null) => void;
+  adjustPrice: string;
+  setAdjustPrice: (v: string) => void;
+}) {
+  const parsedAdjust = parseMoneyInput(adjustPrice);
+  const adjustValid = parsedAdjust !== null && parsedAdjust >= 0;
+
+  const pending = requests.filter((r) => r.status === "pending");
+  const reviewed = requests.filter((r) => r.status !== "pending");
+
+  return (
+    <div className="space-y-4">
+      <Card className="border-border/80">
+        <CardHeader>
+          <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+            <Inbox className="text-primary size-4" /> Price change requests
+          </CardTitle>
+          <CardDescription>
+            Managers can request a price change on any player. Approving sets the
+            official market price; Custom Adjust lets you counter-offer a different
+            price instead.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading requests…
+            </p>
+          ) : pending.length === 0 ? (
+            <p className="text-muted-foreground py-8 text-center text-sm">
+              No pending requests right now.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {pending.map((r) => (
+                <div
+                  key={r._id}
+                  className="rounded-xl border border-border/70 bg-secondary/40 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="flex items-center gap-2 text-sm font-semibold">
+                        @{r.username || "unknown"}
+                        <span className="text-muted-foreground font-normal">
+                          requests a price change for
+                        </span>
+                        <span className="text-primary">{r.playerName}</span>
+                      </p>
+                      <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="font-score line-through opacity-70">
+                          {formatMoney(r.currentPrice)}
+                        </span>
+                        <span>→</span>
+                        <span className="font-score text-base font-bold text-primary">
+                          {formatMoney(r.requestedPrice)}
+                        </span>
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="text-[10px] uppercase">
+                      pending
+                    </Badge>
+                  </div>
+                  <p className="text-muted-foreground mt-2 rounded-lg border border-border/60 bg-background/40 p-2.5 text-sm italic">
+                    “{r.reason}”
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => onReview(r._id, "approve")}>
+                      <CheckCircle2 className="mr-1.5 size-3.5" /> Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setAdjustFor(r);
+                        setAdjustPrice("");
+                      }}
+                    >
+                      <SlidersHorizontal className="mr-1.5 size-3.5" /> Custom adjust
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => onReview(r._id, "deny")}
+                    >
+                      <XCircle className="mr-1.5 size-3.5" /> Deny
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {reviewed.length > 0 && (
+        <Card className="border-border/80">
+          <CardHeader>
+            <CardTitle className="font-display text-sm font-bold uppercase tracking-widest">
+              Recently reviewed
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {reviewed.map((r) => (
+              <div
+                key={r._id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
+              >
+                <p className="text-sm">
+                  <span className="font-semibold">{r.playerName}</span>
+                  <span className="text-muted-foreground"> for @{r.username || "unknown"}</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  {r.finalPrice != null && (
+                    <span className="font-score text-xs font-bold">
+                      final {formatMoney(r.finalPrice)}
+                    </span>
+                  )}
+                  <Badge
+                    variant="outline"
+                    className={cn("text-[10px] uppercase", REQUEST_STATUS_STYLES[r.status])}
+                  >
+                    {r.status}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Custom counter-price dialog */}
+      <Dialog
+        open={adjustFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setAdjustFor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Custom price adjustment</DialogTitle>
+            <DialogDescription>
+              Set a counter-price for {adjustFor?.playerName ?? "this player"} instead of
+              the requested {adjustFor ? formatMoney(adjustFor.requestedPrice) : "amount"}.
+              The player's official price will update to your value and the request will
+              be marked approved with adjustment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="adjust-price">New official price</Label>
+            <Input
+              id="adjust-price"
+              value={adjustPrice}
+              onChange={(e) => setAdjustPrice(e.target.value)}
+              placeholder="e.g. 9.5m, 850k or 9500000"
+              autoFocus
+            />
+            {adjustPrice.trim() !== "" && !adjustValid && (
+              <p className="text-destructive text-xs">
+                Invalid amount — use 12m, 9.5m, 850k or a plain number.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAdjustFor(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!adjustValid || !adjustFor}
+              onClick={() => {
+                if (!adjustFor || parsedAdjust === null) return;
+                onReview(adjustFor._id, "adjust", parsedAdjust);
+                setAdjustFor(null);
+              }}
+            >
+              <SlidersHorizontal className="mr-1.5 size-4" /> Apply & approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Announcement card (super admin only, shown in Settings tab) ──────────
+
+function AnnouncementCard() {
+  const config = useQuery(api.config.getConfig);
+  const setAdminMessage = useMutation(api.config.setAdminMessage);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const value = msg ?? config?.adminMessage ?? "";
+  const dirty = msg !== null && msg !== (config?.adminMessage ?? "");
+
+  const save = async (next: string) => {
+    setBusy(true);
+    try {
+      await setAdminMessage({ message: next });
+      toast.success(next ? "Announcement published to all dashboards." : "Announcement cleared.");
+      setMsg(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the announcement.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="border-primary/40 bg-primary/5">
+      <CardHeader>
+        <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+          <Megaphone className="text-primary size-4" /> Global announcement
+        </CardTitle>
+        <CardDescription>
+          Shown in a banner at the top of every manager's dashboard. Clear it to hide.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Textarea
+          value={value}
+          onChange={(e) => setMsg(e.target.value)}
+          placeholder="e.g. Semifinals start Friday — lock your squads by 6 PM!"
+          rows={3}
+          maxLength={500}
+        />
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-muted-foreground text-xs">
+            {value.trim().length}/500 characters
+            {config?.adminMessage ? " · currently live" : " · no message live"}
+          </p>
+          <div className="flex gap-2">
+            {config?.adminMessage && (
+              <Button variant="outline" size="sm" onClick={() => save("")} disabled={busy}>
+                <Trash2 className="mr-1.5 size-3.5" /> Clear
+              </Button>
+            )}
+            <Button size="sm" onClick={() => save(value.trim())} disabled={busy || !dirty}>
+              {busy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Save className="mr-1.5 size-3.5" />}
+              Publish
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

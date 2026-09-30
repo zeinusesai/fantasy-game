@@ -5,7 +5,65 @@ import { CONFIG_KEYS } from "./configDefaults";
 
 export const getConfig = query({
   args: {},
-  handler: async (ctx) => getPlatformConfig(ctx),
+  handler: async (ctx) => {
+    const base = await getPlatformConfig(ctx);
+    const rows = await ctx.db.query("config").collect();
+    const msgRow = rows.find((r) => r.key === CONFIG_KEYS.ADMIN_MESSAGE);
+    return {
+      ...base,
+      // Optional global announcement — empty string when none exists, so the
+      // dashboard banner renders nothing on a fresh/empty database.
+      adminMessage: typeof msgRow?.value === "string" ? msgRow.value : "",
+    };
+  },
+});
+
+/**
+ * Create, update or clear the global announcement shown on every manager's
+ * dashboard. Passing an empty string (or whitespace) clears it entirely.
+ * Super Admin only — wrapped so failures surface as clean messages.
+ */
+export const setAdminMessage = mutation({
+  args: { message: v.string() },
+  handler: async (ctx, { message }) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Only the Super Admin can update the announcement.",
+      );
+    }
+
+    const trimmed = typeof message === "string" ? message.trim() : "";
+    if (trimmed.length > 500) {
+      throw new Error("Announcement must be 500 characters or fewer.");
+    }
+
+    try {
+      const existing = await ctx.db
+        .query("config")
+        .withIndex("by_key", (q) => q.eq("key", CONFIG_KEYS.ADMIN_MESSAGE))
+        .unique();
+      if (trimmed === "") {
+        // Clear: remove the row so no message exists at all.
+        if (existing) await ctx.db.delete(existing._id);
+        return "";
+      }
+      if (existing) {
+        await ctx.db.patch(existing._id, { value: trimmed });
+      } else {
+        await ctx.db.insert("config", {
+          key: CONFIG_KEYS.ADMIN_MESSAGE,
+          value: trimmed,
+        });
+      }
+      return trimmed;
+    } catch {
+      throw new Error("Could not save the announcement — please try again.");
+    }
+  },
 });
 
 export const setBudget = mutation({

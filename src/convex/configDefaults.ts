@@ -2,6 +2,7 @@
 export const CONFIG_KEYS = {
   BUDGET: "budget",
   HOUSE_LIMIT: "houseLimit",
+  ADMIN_MESSAGE: "adminMessage",
 } as const;
 
 export const DEFAULT_CONFIG = {

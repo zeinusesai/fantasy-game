@@ -60,7 +60,7 @@ export function AppNav({ children }: { children: ReactNode }) {
               <Sword className="size-4" />
             </span>
             <span className="font-display hidden text-lg font-bold tracking-wide sm:block">
-              HOUSE<span className="text-primary">CUP</span>
+              YEAR 11 <span className="text-primary">INTERHOUSE</span>
             </span>
           </button>
 

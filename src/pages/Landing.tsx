@@ -40,7 +40,7 @@ export default function Landing() {
               <Swords className="size-5" />
             </span>
             <span className="font-display text-2xl font-bold tracking-wide">
-              HOUSE<span className="text-primary">CUP</span>
+              YEAR 11 <span className="text-primary">INTERHOUSE</span>
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -293,7 +293,7 @@ export default function Landing() {
       </section>
 
       <footer className="text-muted-foreground border-t border-border/60 py-6 text-center text-xs">
-        House Cup · Interhouse Tournament & Fantasy League
+        Year 11 Interhouse · Tournament & Fantasy League
       </footer>
     </div>
   );

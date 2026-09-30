@@ -6,6 +6,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -13,17 +23,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatMoney } from "@/convex/configDefaults";
+import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { toast } from "sonner";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
-import { AlertTriangle, Check, Info, Loader2, RotateCcw, Users } from "lucide-react";
+import { AlertTriangle, Check, Coins, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { House, Position } from "@/convex/schema";
 
 const FORMATION: Record<Position, number> = { GK: 1, DEF: 2, MID: 2, FWD: 2 };
+
+type PlayerRow = { _id: Id<"players">; name: string; price: number };
 
 export default function SquadBuilder() {
   const playersResult = useQuery(api.players.listPlayers);
@@ -45,6 +57,54 @@ export default function SquadBuilder() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
+
+  // ── Price change request modal state ──
+  const submitPriceRequest = useMutation(api.requests.submitPriceRequest);
+  const myRequestsResult = useQuery(api.requests.getMyPriceRequests);
+  const myRequests = myRequestsResult ?? [];
+  const pendingByPlayer = new Map(
+    myRequests
+      .filter((r) => r.status === "pending")
+      .map((r) => [r.playerId as string, r]),
+  );
+  const [requestFor, setRequestFor] = useState<PlayerRow | null>(null);
+  const [reqPrice, setReqPrice] = useState("");
+  const [reqReason, setReqReason] = useState("");
+  const [reqBusy, setReqBusy] = useState(false);
+
+  const parsedReqPrice = parseMoneyInput(reqPrice);
+  const reqValid =
+    requestFor !== null &&
+    parsedReqPrice !== null &&
+    parsedReqPrice > 0 &&
+    parsedReqPrice !== requestFor.price &&
+    reqReason.trim().length >= 5;
+
+  const openRequest = (p: PlayerRow) => {
+    setRequestFor(p);
+    setReqPrice("");
+    setReqReason("");
+  };
+
+  const handleSubmitRequest = async () => {
+    if (!requestFor || !parsedReqPrice) return;
+    setReqBusy(true);
+    try {
+      await submitPriceRequest({
+        playerId: requestFor._id,
+        requestedPrice: parsedReqPrice,
+      reason: reqReason.trim(),
+      });
+      toast.success(
+        `Price change request for ${requestFor.name} sent to the admins.`,
+      );
+      setRequestFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not submit the request.");
+    } finally {
+      setReqBusy(false);
+    }
+  };
 
   // Hydrate local state from the saved squad once it loads (effect, not
   // render-phase setState).
@@ -382,43 +442,59 @@ export default function SquadBuilder() {
                     const wouldBreakHouse = !isSelected && houseCount >= houseLimit;
                     const canAfford = p.price <= remaining;
                     const affordable = isSelected || canAfford;
+                    const pendingReq = pendingByPlayer.get(p._id);
 
                     return (
-                      <button
-                        key={p._id}
-                        onClick={() => {
-                          if (wouldBreakHouse && !isSelected) {
-                            toast.error(`House limit: max ${houseLimit} players from ${p.house}.`);
-                            return;
-                          }
-                          if (!affordable && !isSelected) {
-                            toast.error("Not enough budget left for this player.");
-                            return;
-                          }
-                          toggle(p._id);
-                        }}
-                        disabled={!affordable && !isSelected}
-                        className={`flex items-center justify-between gap-2 rounded-xl border p-3 text-left transition-all ${
-                          isSelected
-                            ? "border-primary bg-primary/10"
-                            : affordable
-                              ? "border-border/70 bg-secondary/40 hover:border-primary/40"
-                              : "border-border/40 bg-secondary/20 opacity-50"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
-                            {isSelected && <Check className="text-primary size-3.5 shrink-0" />}
-                            {p.name}
-                          </p>
-                          <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
-                            {p.house} <PositionChip position={p.position} />
-                          </p>
-                        </div>
-                        <span className="font-score shrink-0 text-sm font-bold">
-                          {formatMoney(p.price)}
-                        </span>
-                      </button>
+                      <div key={p._id} className="flex h-full items-stretch gap-2">
+                        <button
+                          onClick={() => {
+                            if (wouldBreakHouse && !isSelected) {
+                              toast.error(`House limit: max ${houseLimit} players from ${p.house}.`);
+                              return;
+                            }
+                            if (!affordable && !isSelected) {
+                              toast.error("Not enough budget left for this player.");
+                              return;
+                            }
+                            toggle(p._id);
+                          }}
+                          disabled={!affordable && !isSelected}
+                          className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border p-3 text-left transition-all ${
+                            isSelected
+                              ? "border-primary bg-primary/10"
+                              : affordable
+                                ? "border-border/70 bg-secondary/40 hover:border-primary/40"
+                                : "border-border/40 bg-secondary/20 opacity-50"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                              {isSelected && <Check className="text-primary size-3.5 shrink-0" />}
+                              {p.name}
+                            </p>
+                            <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+                              {p.house} <PositionChip position={p.position} />
+                            </p>
+                            {pendingReq && (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                                <Coins className="size-3" /> price review pending
+                              </span>
+                            )}
+                          </div>
+                          <span className="font-score shrink-0 text-sm font-bold">
+                            {formatMoney(p.price)}
+                          </span>
+                        </button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-9 shrink-0 self-center px-0"
+                          title="Request price change"
+                          onClick={() => openRequest(p)}
+                        >
+                          <Coins className="size-4" />
+                        </Button>
+                      </div>
                     );
                   })}
                 </CardContent>
@@ -431,6 +507,82 @@ export default function SquadBuilder() {
           </div>
         </div>
       )}
+
+      {/* Price change request modal */}
+      <Dialog
+        open={requestFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setRequestFor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Request price change</DialogTitle>
+            <DialogDescription>
+              Ask the admins to revalue <span className="text-foreground font-semibold">
+                {requestFor?.name ?? "this player"}
+              </span>{" "}
+              (currently {requestFor ? formatMoney(requestFor.price) : "—"}). They'll review
+              your request and set the final market price.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="req-player">Player</Label>
+              <Input id="req-player" value={requestFor?.name ?? ""} readOnly disabled />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="req-price">Requested price</Label>
+              <Input
+                id="req-price"
+                value={reqPrice}
+                onChange={(e) => setReqPrice(e.target.value)}
+                placeholder="e.g. 9.5m, 850k or 9500000"
+                autoFocus
+              />
+              {reqPrice.trim() !== "" &&
+                (parsedReqPrice === null ? (
+                  <p className="text-destructive text-xs">
+                    Invalid amount — use 12m, 9.5m, 850k or a plain number.
+                  </p>
+                ) : parsedReqPrice <= 0 ? (
+                  <p className="text-destructive text-xs">Price must be greater than zero.</p>
+                ) : requestFor && parsedReqPrice === requestFor.price ? (
+                  <p className="text-destructive text-xs">
+                    That's the same as the current price.
+                  </p>
+                ) : null)}
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="req-reason">Reason / justification</Label>
+              <Textarea
+                id="req-reason"
+                value={reqReason}
+                onChange={(e) => setReqReason(e.target.value)}
+                placeholder="Why should this player be revalued? (min 5 characters)"
+                rows={3}
+                maxLength={400}
+              />
+              <p className="text-muted-foreground text-xs">
+                {reqReason.trim().length}/400 characters
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRequestFor(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmitRequest} disabled={reqBusy || !reqValid}>
+              {reqBusy ? (
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+              ) : (
+                <Coins className="mr-1.5 size-4" />
+              )}
+              Send request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppNav>
   );
 }

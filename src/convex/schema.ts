@@ -53,6 +53,13 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
+// status values for manager-submitted price change requests.
+export const REQUEST_STATUSES = ["pending", "approved", "denied", "adjusted"] as const;
+export const requestStatusValidator = v.union(
+  ...REQUEST_STATUSES.map((s) => v.literal(s)),
+);
+export type RequestStatus = Infer<typeof requestStatusValidator>;
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -162,6 +169,24 @@ const schema = defineSchema(
       .index("by_match", ["matchId"])
       .index("by_user", ["userId"])
       .index("by_squad", ["squadId"]),
+
+    // ===== Price change requests from managers (admins review) =====
+    priceRequests: defineTable({
+      userId: v.id("users"),
+      username: v.optional(v.string()),
+      playerId: v.id("players"),
+      playerName: v.string(),
+      currentPrice: v.number(),
+      requestedPrice: v.number(),
+      reason: v.string(),
+      status: requestStatusValidator, // "pending" | "approved" | "denied" | "adjusted"
+      decidedBy: v.optional(v.string()),
+      decidedAt: v.optional(v.number()),
+      finalPrice: v.optional(v.number()),
+    })
+      .index("by_status", ["status"])
+      .index("by_player", ["playerId"])
+      .index("by_user", ["userId"]),
   },
   {
     schemaValidation: false,

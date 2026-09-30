@@ -251,7 +251,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       </div>
 
       <footer className="text-muted-foreground py-4 text-center text-xs">
-        House Cup · Interhouse Tournament & Fantasy League
+        Year 11 Interhouse · Tournament & Fantasy League
       </footer>
     </div>
   );

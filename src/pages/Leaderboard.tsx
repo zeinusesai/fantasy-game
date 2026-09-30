@@ -73,7 +73,13 @@ export default function Leaderboard() {
                     return (
                       <TableRow
                         key={row.userId}
-                        className={cn(isMe && "bg-primary/5 hover:bg-primary/10")}
+                        className={cn(
+                          // 1st place: gold highlight + subtle glow
+                          row.rank === 1 &&
+                            row.totalPoints > 0 &&
+                            "border-b-amber-400/40 bg-gradient-to-r from-amber-400/15 via-amber-400/5 to-transparent shadow-[0_0_24px_rgba(251,191,36,0.12)]",
+                          isMe && "bg-primary/5 hover:bg-primary/10",
+                        )}
                       >
                         <TableCell>
                           <span className="flex items-center gap-1.5 font-bold">
@@ -98,11 +104,12 @@ export default function Leaderboard() {
                           </Avatar>
                         </TableCell>
                         <TableCell>
-                          <span className="flex items-center gap-2 font-semibold">
+                          <span className="flex flex-wrap items-center gap-2 font-semibold">
                             {row.teamName}
                             {row.rank === 1 && row.totalPoints > 0 && (
-                              <Badge className="bg-primary/15 text-primary border-0 gap-1">
-                                <Trophy className="size-3" /> Leader
+                              <Badge className="gap-1 whitespace-normal border border-amber-400/40 bg-amber-400/15 py-1 text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
+                                <Trophy className="size-3 shrink-0" />
+                                CURRENTLY WINNING: 1x Premium Grade Plastic Medal (Priceless)
                               </Badge>
                             )}
                           </span>
