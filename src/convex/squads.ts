@@ -1,0 +1,120 @@
+import { v } from "convex/values";
+import { query, mutation } from "./_generated/server";
+import { requireUser, getPlatformConfig, getSquadForUser } from "./lib";
+import { formatMoney } from "./configDefaults";
+import type { Doc, Id } from "./_generated/dataModel";
+
+const REQUIRED_FORMATION: Record<string, number> = {
+  GK: 1,
+  DEF: 2,
+  MID: 2,
+  FWD: 2,
+};
+
+export type SquadPlayer = Doc<"players">;
+
+export const getMySquad = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    const squad = await getSquadForUser(ctx, user._id);
+    if (!squad) return null;
+    const players = await Promise.all(squad.playerIds.map((id) => ctx.db.get(id)));
+    const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
+    return {
+      squadId: squad._id,
+      totalSpent: squad.totalSpent,
+      players: players.filter(Boolean) as SquadPlayer[],
+      captainId: captain ? squad.captainId : null,
+    };
+  },
+});
+
+/** Players in the current user's squad (used by match-center PotM display). */
+export const getSquadPointsByMatch = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const user = await requireUser(ctx);
+    const squad = await getSquadForUser(ctx, user._id);
+    if (!squad) return { squadId: null, points: 0 };
+    const all = await ctx.db
+      .query("matchScores")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    const score = all.find((s) => s.squadId === squad._id);
+    return { squadId: squad._id, points: score?.points ?? 0 };
+  },
+});
+
+export const saveSquad = mutation({
+  args: {
+    playerIds: v.array(v.id("players")),
+    captainId: v.id("players"),
+  },
+  handler: async (ctx, { playerIds, captainId }) => {
+    const user = await requireUser(ctx);
+    const { budget, houseLimit } = await getPlatformConfig(ctx);
+
+    if (playerIds.length !== 7) {
+      throw new Error(`Pick exactly 7 players (currently ${playerIds.length}).`);
+    }
+    if (new Set(playerIds).size !== playerIds.length) {
+      throw new Error("You cannot pick the same player twice.");
+    }
+    const captainInSquad = playerIds.includes(captainId);
+    if (!captainInSquad) {
+      throw new Error("Your captain must be one of your 7 starters.");
+    }
+
+    const players = await Promise.all(playerIds.map((id) => ctx.db.get(id)));
+    if (players.some((p) => !p || !p.active)) {
+      throw new Error("One of your selected players no longer exists.");
+    }
+
+    // Formation: 1 GK / 2 DEF / 2 MID / 2 FWD
+    const counts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+    for (const p of players) if (p) counts[p.position] += 1;
+    for (const [pos, need] of Object.entries(REQUIRED_FORMATION)) {
+      if (counts[pos] !== need) {
+        throw new Error(
+          `Illegal formation: you need exactly ${need} × ${pos} (you picked ${counts[pos]}).`,
+        );
+      }
+    }
+
+    // House limit
+    const houseCounts = new Map<string, number>();
+    for (const p of players) {
+      if (!p) continue;
+      houseCounts.set(p.house, (houseCounts.get(p.house) ?? 0) + 1);
+    }
+    for (const [house, count] of houseCounts) {
+      if (count > houseLimit) {
+        throw new Error(
+          `House limit exceeded: max ${houseLimit} players from ${house} (you picked ${count}).`,
+        );
+      }
+    }
+
+    // Budget
+    const totalSpent = players.reduce((sum, p) => sum + (p?.price ?? 0), 0);
+    if (totalSpent > budget) {
+      throw new Error(
+        `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(budget)}.`,
+      );
+    }
+    const myBudget = user.budget ?? budget;
+    if (totalSpent > myBudget) {
+      throw new Error(
+        `Squad exceeds your available budget: ${formatMoney(myBudget)}.`,
+      );
+    }
+
+    const existing = await getSquadForUser(ctx, user._id);
+    if (existing) {
+      await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent });
+      return existing._id;
+    }
+    return ctx.db.insert("squads", { userId: user._id, playerIds, captainId, totalSpent });
+  },
+});

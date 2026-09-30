@@ -1,0 +1,149 @@
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/hooks/use-auth";
+import { avatarPresetUrl } from "@/lib/fantasy";
+import { cn } from "@/lib/utils";
+import {
+  BarChart3,
+  Crown,
+  LayoutDashboard,
+  LogOut,
+  Settings2,
+  Shield,
+  Sword,
+  Trophy,
+  Users,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { useNavigate, NavLink } from "react-router";
+
+const LINKS = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/squad", label: "My Squad", icon: Users },
+  { to: "/tournament", label: "Tournament", icon: Trophy },
+  { to: "/leaderboard", label: "Leaderboard", icon: BarChart3 },
+] as const;
+
+export function AppNav({ children }: { children: ReactNode }) {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const role = user?.role ?? "manager";
+  const isAdmin = role === "super_admin" || role === "moderator";
+  const avatar = user?.image?.startsWith("data:") || user?.image?.startsWith("http")
+    ? user.image
+    : avatarPresetUrl(user?.image);
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/");
+  };
+
+  return (
+    <div className="stadium-bg min-h-screen">
+      <header className="sticky top-0 z-40 border-b border-border/80 bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-4">
+          <button
+            onClick={() => navigate("/dashboard")}
+            className="mr-2 flex items-center gap-2"
+            aria-label="Home"
+          >
+            <span className="from-primary to-primary/60 flex size-8 items-center justify-center rounded-lg bg-gradient-to-br text-primary-foreground shadow-md">
+              <Sword className="size-4" />
+            </span>
+            <span className="font-display hidden text-lg font-bold tracking-wide sm:block">
+              HOUSE<span className="text-primary">CUP</span>
+            </span>
+          </button>
+
+          <nav className="flex flex-1 items-center gap-1 overflow-x-auto">
+            {LINKS.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  )
+                }
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="hidden md:inline">{label}</span>
+              </NavLink>
+            ))}
+            {isAdmin && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                  )
+                }
+              >
+                <Settings2 className="size-4 shrink-0" />
+                <span className="hidden md:inline">Admin</span>
+              </NavLink>
+            )}
+          </nav>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="gap-2 px-2">
+                <Avatar className="size-7">
+                  <AvatarImage src={avatar ?? undefined} alt={user?.username ?? "avatar"} />
+                  <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
+                    {(user?.username ?? "?").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="hidden max-w-28 truncate text-sm font-medium sm:block">
+                  {user?.teamName ?? user?.username}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="flex items-center justify-between">
+                <span>@{user?.username}</span>
+                {role === "super_admin" && (
+                  <Badge className="bg-primary text-primary-foreground gap-1">
+                    <Crown className="size-3" /> Super Admin
+                  </Badge>
+                )}
+                {role === "moderator" && (
+                  <Badge variant="outline" className="gap-1">
+                    <Shield className="size-3" /> Moderator
+                  </Badge>
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/profile")} className="cursor-pointer">
+                <Users className="mr-2 size-4" /> Profile & Squad
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleSignOut}
+                className="cursor-pointer text-destructive focus:text-destructive"
+              >
+                <LogOut className="mr-2 size-4" /> Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-7xl px-4 py-6">{children}</main>
+    </div>
+  );
+}
