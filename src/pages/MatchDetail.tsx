@@ -1,10 +1,12 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
+import { PageLoading } from "@/components/PageLoading";
 import { HouseBadge, HouseCrest, RatingBadge } from "@/components/houses";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { STAGE_LABELS } from "@/lib/fantasy";
+import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
   Award,
@@ -16,23 +18,49 @@ import {
   Star,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
-import type { Doc } from "@/convex/_generated/dataModel";
+import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type MatchPlayerLine = Doc<"matchPlayers"> & { player: Doc<"players"> | null };
 
 export default function MatchDetail() {
   const { matchId } = useParams<{ matchId: string }>();
   const navigate = useNavigate();
-  const data = useQuery(api.matches.getMatch, {
-    matchId: matchId as never,
-  });
 
-  if (!data) {
+  // Guard the URL param: a malformed/nonexistent id must never reach Convex
+  // as an invalid argument (that would throw an arg-validation error).
+  const isValidId =
+    typeof matchId === "string" && /^[a-z0-9]{20,40}$/.test(matchId);
+  const data = useQuery(
+    api.matches.getMatch,
+    isValidId ? ({ matchId } as { matchId: Id<"matches"> }) : "skip",
+  );
+
+  if (!isValidId || !data) {
     return (
       <AppNav>
         <Card>
-          <CardContent className="py-16 text-center text-muted-foreground">
-            {data === undefined ? "Loading…" : "Match not found."}
+          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+            {!isValidId ? (
+              <>
+                <p className="text-muted-foreground text-lg font-semibold">
+                  Invalid match link
+                </p>
+                <Button variant="outline" onClick={() => navigate("/tournament")}>
+                  <ArrowLeft className="mr-1.5 size-4" /> Back to tournament
+                </Button>
+              </>
+            ) : data === undefined ? (
+              <PageLoading label="Loading match…" />
+            ) : (
+              <>
+                <p className="text-muted-foreground text-lg font-semibold">
+                  Match not found — it may have been deleted.
+                </p>
+                <Button variant="outline" onClick={() => navigate("/tournament")}>
+                  <ArrowLeft className="mr-1.5 size-4" /> Back to tournament
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       </AppNav>

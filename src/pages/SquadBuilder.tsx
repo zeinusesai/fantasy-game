@@ -1,6 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { AppNav } from "@/components/AppNav";
 import { PitchView } from "@/components/PitchView";
 import { HouseBadge, HouseCrest, PositionChip } from "@/components/houses";
 import { Badge } from "@/components/ui/badge";
@@ -17,18 +16,24 @@ import {
 import { formatMoney } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { toast } from "sonner";
+import { AppNav } from "@/components/AppNav";
+import { PageLoading } from "@/components/PageLoading";
 import { AlertTriangle, Check, Info, Loader2, RotateCcw, Users } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { House, Position } from "@/convex/schema";
 
 const FORMATION: Record<Position, number> = { GK: 1, DEF: 2, MID: 2, FWD: 2 };
 
 export default function SquadBuilder() {
-  const players = useQuery(api.players.listPlayers);
-  const mySquad = useQuery(api.squads.getMySquad);
+  const playersResult = useQuery(api.players.listPlayers);
+  const mySquadResult = useQuery(api.squads.getMySquad);
   const config = useQuery(api.config.getConfig);
   const saveSquad = useMutation(api.squads.saveSquad);
+
+  const players = playersResult ?? [];
+  const mySquad = mySquadResult ?? null;
+  const loading = playersResult === undefined || mySquadResult === undefined;
 
   const budget = config?.budget ?? 100_000_000;
   const houseLimit = config?.houseLimit ?? 3;
@@ -41,15 +46,18 @@ export default function SquadBuilder() {
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
-  // Hydrate local state from the saved squad once it loads.
-  if (mySquad && !initialized) {
-    setInitialized(true);
-    setSelected(mySquad.players.map((p) => p._id));
-    setCaptainId(mySquad.captainId);
-  }
+  // Hydrate local state from the saved squad once it loads (effect, not
+  // render-phase setState).
+  useEffect(() => {
+    if (mySquad && !initialized) {
+      setInitialized(true);
+      setSelected(mySquad.players.map((p) => p._id));
+      setCaptainId(mySquad.captainId);
+    }
+  }, [mySquad, initialized]);
 
   const playerMap = useMemo(
-    () => new Map((players ?? []).map((p) => [p._id, p])),
+    () => new Map(players.map((p) => [p._id, p])),
     [players],
   );
 
@@ -76,7 +84,7 @@ export default function SquadBuilder() {
     {} as Record<House, number>,
   );
 
-  const filtered = (players ?? []).filter((p) => {
+  const filtered = players.filter((p) => {
     if (houseFilter !== "all" && p.house !== houseFilter) return false;
     if (positionFilter !== "all" && p.position !== positionFilter) return false;
     if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -159,7 +167,9 @@ export default function SquadBuilder() {
 
   return (
     <AppNav>
-      {(players ?? []).length === 0 ? (
+      {loading ? (
+        <PageLoading label="Loading squad builder…" />
+      ) : players.length === 0 ? (
         <Card className="border-border/80">
           <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
             <Users className="text-muted-foreground size-10" />

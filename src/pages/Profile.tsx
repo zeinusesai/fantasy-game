@@ -12,16 +12,21 @@ import { formatMoney } from "@/convex/configDefaults";
 import { AVATAR_PRESETS, avatarPresetUrl } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { PageLoading } from "@/components/PageLoading";
 import { toast } from "sonner";
 import { Loader2, Save, Star } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export default function Profile() {
-  const { user } = useAuth();
-  const mySquad = useQuery(api.squads.getMySquad);
-  const myStats = useQuery(api.managers.getMyStats);
+  const { user, isLoading: authLoading } = useAuth();
+  const mySquadResult = useQuery(api.squads.getMySquad);
+  const myStatsResult = useQuery(api.managers.getMyStats);
   const config = useQuery(api.config.getConfig);
   const updateProfile = useMutation(api.managers.updateProfile);
+
+  const mySquad = mySquadResult ?? null;
+  const myStats = myStatsResult ?? null;
+  const loading = authLoading || mySquadResult === undefined || myStatsResult === undefined;
 
   const [teamName, setTeamName] = useState("");
   const [avatar, setAvatar] = useState<string>(AVATAR_PRESETS[0].id);
@@ -76,6 +81,9 @@ export default function Profile() {
 
   return (
     <AppNav>
+      {loading ? (
+        <PageLoading label="Loading profile…" />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Profile editor */}
         <Card className="card-sheen border-border/80 lg:col-span-1">
@@ -217,6 +225,7 @@ export default function Profile() {
           )}
         </div>
       </div>
+      )}
     </AppNav>
   );
 }

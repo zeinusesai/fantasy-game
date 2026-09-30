@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
+import { PageLoading } from "@/components/PageLoading";
 import { HouseCrest } from "@/components/houses";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,11 +16,15 @@ import { useNavigate } from "react-router";
 
 export default function Tournament() {
   const navigate = useNavigate();
-  const matches = useQuery(api.matches.listMatches);
-  const leaders = useQuery(api.managers.getTournamentLeaders);
-  const logos = useQuery(api.houses.listHouseLogos);
+  const matchesResult = useQuery(api.matches.listMatches);
+  const leadersResult = useQuery(api.managers.getTournamentLeaders);
+  const logosResult = useQuery(api.houses.listHouseLogos);
 
-  const byStage = (stage: Stage) => (matches ?? []).filter((m) => m.stage === stage);
+  const matches = matchesResult ?? [];
+  const leaders = leadersResult ?? { topScorers: [], topAssisters: [] };
+  const loading = matchesResult === undefined;
+
+  const byStage = (stage: Stage) => matches.filter((m) => m.stage === stage);
   const finalMatch = byStage("final")[0];
   const thirdPlace = byStage("third_place")[0];
   const semis = [...byStage("semifinal1"), ...byStage("semifinal2")];
@@ -46,6 +51,9 @@ export default function Tournament() {
 
   return (
     <AppNav>
+      {loading ? (
+        <PageLoading label="Loading tournament…" />
+      ) : (
       <div className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -222,6 +230,7 @@ export default function Tournament() {
           </CardContent>
         </Card>
       </div>
+      )}
     </AppNav>
   );
 }

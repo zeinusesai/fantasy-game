@@ -1,5 +1,5 @@
 import type { QueryCtx, MutationCtx } from "./_generated/server";
-import { internalQuery } from "./_generated/server";
+import { internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { DEFAULT_CONFIG, CONFIG_KEYS } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -58,6 +58,22 @@ export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   }
   return user;
 }
+
+/** Internal: deletes a user and their password auth account (admin tooling). */
+export const deleteUserAndAccount = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const accounts = await ctx.db
+      .query("authAccounts")
+      .withIndex("userIdAndProvider", (q) =>
+        q.eq("userId", userId).eq("provider", "password"),
+      )
+      .collect();
+    for (const a of accounts) await ctx.db.delete(a._id);
+    await ctx.db.delete(userId);
+    return { accounts: accounts.length };
+  },
+});
 
 export async function getSquadForUser(ctx: QueryCtx | MutationCtx, userId: Id<"users">) {
   return ctx.db

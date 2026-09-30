@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
+import { PageLoading } from "@/components/PageLoading";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +16,14 @@ import {
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import { BarChart3, Crown, Flame, Medal, Trophy } from "lucide-react";
+import { BarChart3, Crown, Flame, Loader2, Medal, Trophy } from "lucide-react";
 
 export default function Leaderboard() {
   const { user } = useAuth();
-  const leaderboard = useQuery(api.managers.getLeaderboard);
+  const leaderboardResult = useQuery(api.managers.getLeaderboard);
 
-  const rows = leaderboard ?? [];
+  const rows = leaderboardResult ?? [];
+  const loading = leaderboardResult === undefined;
   const medalStyles = ["text-amber-300", "text-slate-300", "text-orange-300"];
 
   return (
@@ -41,7 +43,11 @@ export default function Leaderboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {rows.length === 0 ? (
+            {loading ? (
+              <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+                <Loader2 className="size-4 animate-spin" /> Loading rankings…
+              </p>
+            ) : rows.length === 0 ? (
               <p className="text-muted-foreground py-8 text-center text-sm">
                 No managers have picked a squad yet. Be the first!
               </p>

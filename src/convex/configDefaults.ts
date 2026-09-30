@@ -13,6 +13,7 @@ export const DEFAULT_BUDGET_CONFIG_KEY = CONFIG_KEYS.BUDGET;
 
 // Budgets are plain dollar amounts stored as numbers.
 export function formatMoney(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "$0";
   if (value >= 1_000_000) {
     const m = value / 1_000_000;
     const str = m % 1 === 0 ? String(m) : m.toFixed(1);

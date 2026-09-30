@@ -49,12 +49,23 @@ import {
   Users2,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { PageLoading } from "@/components/PageLoading";
 
 export default function Admin() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const role = user?.role ?? "manager";
   const isSuper = role === "super_admin";
   const isModerator = role === "moderator";
+
+  // Wait for auth to resolve before judging access — otherwise a signed-in
+  // admin briefly renders the "no permission" screen on first paint.
+  if (authLoading || user === undefined) {
+    return (
+      <AppNav>
+        <PageLoading label="Checking access…" />
+      </AppNav>
+    );
+  }
 
   if (!isSuper && !isModerator) {
     return (
@@ -128,7 +139,8 @@ export default function Admin() {
 // ── Players tab (super admin + moderator) ────────────────────────────────
 
 function PlayersTab({ canDelete }: { canDelete: boolean }) {
-  const players = useQuery(api.players.listPlayers);
+  const playersResult = useQuery(api.players.listPlayers);
+  const players = playersResult ?? [];
   const addPlayer = useMutation(api.players.addPlayer);
   const updatePlayer = useMutation(api.players.updatePlayer);
   const deletePlayer = useMutation(api.players.deletePlayer);
@@ -269,11 +281,15 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
             Player database
           </CardTitle>
           <CardDescription>
-            {(players ?? []).length} active player{(players ?? []).length === 1 ? "" : "s"} in the market.
+            {players.length} active player{players.length === 1 ? "" : "s"} in the market.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {(players ?? []).length === 0 ? (
+          {playersResult === undefined ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading players…
+            </p>
+          ) : players.length === 0 ? (
             <p className="text-muted-foreground py-8 text-center text-sm">
               No players yet — add the first one on the left.
             </p>
@@ -290,7 +306,7 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(players ?? []).map((p) =>
+                  {players.map((p) =>
                     editing === p._id ? (
                       <TableRow key={p._id}>
                         <TableCell>
@@ -399,8 +415,10 @@ const emptyLine = (playerId: Id<"players">): LineDraft => ({
 });
 
 function MatchesTab() {
-  const players = useQuery(api.players.listPlayers);
-  const matches = useQuery(api.matches.listMatches);
+  const playersResult = useQuery(api.players.listPlayers);
+  const matchesResult = useQuery(api.matches.listMatches);
+  const players = playersResult ?? [];
+  const matches = matchesResult ?? [];
   const saveMatch = useMutation(api.matches.saveMatch);
   const scheduleMatch = useMutation(api.matches.scheduleMatch);
   const deleteMatch = useMutation(api.matches.deleteMatch);
@@ -418,11 +436,11 @@ function MatchesTab() {
   const [saving, setSaving] = useState(false);
 
   const playerMap = useMemo(
-    () => new Map((players ?? []).map((p) => [p._id, p])),
+    () => new Map(players.map((p) => [p._id, p])),
     [players],
   );
-  const homePlayers = (players ?? []).filter((p) => p.house === homeHouse);
-  const awayPlayers = (players ?? []).filter((p) => p.house === awayHouse);
+  const homePlayers = players.filter((p) => p.house === homeHouse);
+  const awayPlayers = players.filter((p) => p.house === awayHouse);
 
   const addLine = (playerId: Id<"players">) => {
     if (lines.some((l) => l.playerId === playerId)) return;
@@ -623,7 +641,11 @@ function MatchesTab() {
                     + {p.name}
                   </button>
                 ))}
-                {(players ?? []).length === 0 && (
+                {playersResult === undefined ? (
+                  <p className="text-muted-foreground flex items-center gap-2 text-xs">
+                    <Loader2 className="size-3.5 animate-spin" /> Loading players…
+                  </p>
+                ) : players.length === 0 && (
                   <p className="text-muted-foreground text-xs">
                     Add players in the Players tab first.
                   </p>
@@ -722,10 +744,14 @@ function MatchesTab() {
             <CardDescription>Editing an existing fixture isn't supported in v1 — delete and re-enter it.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {(matches ?? []).length === 0 && (
+            {matchesResult === undefined ? (
+              <p className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
+                <Loader2 className="size-4 animate-spin" /> Loading matches…
+              </p>
+            ) : matches.length === 0 && (
               <p className="text-muted-foreground text-sm">No matches recorded yet.</p>
             )}
-            {(matches ?? []).map((m) => (
+            {matches.map((m) => (
               <div
                 key={m._id}
                 className="flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-secondary/40 px-3 py-2"
