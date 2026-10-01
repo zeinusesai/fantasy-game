@@ -2,6 +2,14 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
 import { PitchView } from "@/components/PitchView";
+import {
+  ActivityFeedCard,
+  AwardsCard,
+  HallOfFameCard,
+  HouseStandingsCard,
+  PredictorCard,
+  StatsRacesCard,
+} from "@/components/DashboardWidgets";
 import { HouseCrest, PositionChip } from "@/components/houses";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -271,6 +279,22 @@ export default function Dashboard() {
                 ))}
               </CardContent>
             </Card>
+          </div>
+        </div>
+
+        {/* Hall of Fame — renders only after the Super Admin finalizes. */}
+        <HallOfFameCard />
+
+        {/* Awards: Tactical Genius, Unlucky Manager, Differential, PotW */}
+        <AwardsCard />
+
+        {/* Community + prediction + standings grid */}
+        <div className="grid gap-6 lg:grid-cols-3">
+          <ActivityFeedCard />
+          <PredictorCard />
+          <div className="space-y-6">
+            <HouseStandingsCard />
+            <StatsRacesCard />
           </div>
         </div>
 

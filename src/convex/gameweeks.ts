@@ -249,6 +249,15 @@ export const settleGameweek = mutation({
       }
     }
 
+    // Idempotency guard: a stage can only be settled once.
+    const existingRows = await ctx.db.query("gameweeks").collect();
+    for (const s of stages) {
+      const row = existingRows.find((r) => r.stage === s);
+      if (row?.settled === true) {
+        throw new Error(`Gameweek for ${s} has already been settled.`);
+      }
+    }
+
     try {
       const stageSet = new Set(stages.map(String));
 
@@ -512,42 +521,213 @@ export const getTournamentAwards = query({
         }
       }
 
-      // Player of the Week: top fantasy scorer across the latest completed matches.
-      const completed = (await ctx.db.query("matchPlayers").collect())
-        .filter((mp) => {
-          // matchPlayers rows have no stage; join via matches set of the last GW.
-          return true;
-        });
-      const lastStageMatches = (await ctx.db.query("matches").collect())
+      // Player of the Week: top fantasy scorer among the latest completed
+      // gameweek's matches (matches created closest to the newest one).
+      const allMatches = (await ctx.db.query("matches").collect())
         .filter((m) => m.status === "completed")
         .sort((a, b) => b.createdAt - a.createdAt);
-      const latestSet = new Set(
-        lastStageMatches
-          .filter((m) => {
-            const newest = lastStageMatches[0]?.createdAt ?? 0;
-            return Math.abs(m.createdAt - newest) < 1000 * 60 * 60 * 24;
-          })
-          .map((m) => String(m._id)),
-      );
-      const potwRows = completed
-        .filter((mp) => latestSet.size === 0 || latestSet.has(String(mp.matchId)))
-        .sort((a, b) => (Number(b.fantasyPoints) || 0) - (Number(a.fantasyPoints) || 0));
-      if (potwRows.length > 0) {
-        const top = potwRows[0];
-        const player = await ctx.db.get(top.playerId);
-        if (player) {
-          empty.playerOfTheWeek = {
-            playerId: player._id,
-            playerName: player.name,
-            house: player.house,
-            points: Number(top.fantasyPoints) || 0,
-          };
+      const mpRows = await ctx.db.query("matchPlayers").collect();
+      if (allMatches.length > 0) {
+        const newest = allMatches[0].createdAt;
+        const latestSet = new Set(
+          allMatches
+            .filter((m) => Math.abs(newest - m.createdAt) < 1000 * 60 * 60 * 48)
+            .map((m) => String(m._id)),
+        );
+        const pool = latestSet.size > 0
+          ? mpRows.filter((mp) => latestSet.has(String(mp.matchId)))
+          : mpRows;
+        const top = pool
+          .slice()
+          .sort((a, b) => (Number(b.fantasyPoints) || 0) - (Number(a.fantasyPoints) || 0))[0];
+        if (top) {
+          const player = await ctx.db.get(top.playerId);
+          if (player) {
+            empty.playerOfTheWeek = {
+              playerId: player._id,
+              playerName: player.name,
+              house: player.house,
+              points: Number(top.fantasyPoints) || 0,
+            };
+          }
         }
       }
 
       return empty;
     } catch {
       return empty;
+    }
+  },
+});
+
+/**
+ * House standings: total points and average points per manager for each of
+ * the four houses. A manager counts toward the house most represented in
+ * their squad (ties → first found). Safe at 0 squads — averages use
+ * Math.max(count, 1) so no division by zero can occur.
+ */
+export const getHouseStandings = query({
+  args: {},
+  handler: async (ctx) => {
+    const safe = () =>
+      ("Fire|Earth|Wind|Water".split("|")).map((house) => ({
+        house,
+        totalPoints: 0,
+        managerCount: 0,
+        avgPoints: 0,
+      }));
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      if (squads.length === 0) return safe();
+
+      const players = await ctx.db.query("players").collect();
+      const houseByPlayer = new Map(players.map((p) => [String(p._id), p.house]));
+      const scores = await ctx.db.query("matchScores").collect();
+      const totals = new Map<string, number>();
+      for (const s of scores) {
+        totals.set(s.userId, (totals.get(s.userId) ?? 0) + (Number(s.points) || 0));
+      }
+
+      const buckets = new Map<
+        string,
+        { totalPoints: number; managerCount: number }
+      >();
+      for (const squad of squads) {
+        const counts = new Map<string, number>();
+        for (const pid of squad.playerIds ?? []) {
+          const house = houseByPlayer.get(String(pid));
+          if (!house) continue;
+          counts.set(house, (counts.get(house) ?? 0) + 1);
+        }
+        let best = "";
+        let bestN = 0;
+        for (const [house, n] of counts) {
+          if (n > bestN) { best = house; bestN = n; }
+        }
+        if (!best) continue;
+        const cur = buckets.get(best) ?? { totalPoints: 0, managerCount: 0 };
+        cur.totalPoints += totals.get(squad.userId) ?? 0;
+        cur.managerCount += 1;
+        buckets.set(best, cur);
+      }
+
+      return ("Fire|Earth|Wind|Water".split("|")).map((house) => {
+        const b = buckets.get(house) ?? { totalPoints: 0, managerCount: 0 };
+        return {
+          house,
+          totalPoints: b.totalPoints,
+          managerCount: b.managerCount,
+          avgPoints: Math.round((b.totalPoints / Math.max(b.managerCount, 1)) * 10) / 10,
+        };
+      });
+    } catch {
+      return safe();
+    }
+  },
+});
+
+/**
+ * Tournament stat races: Golden Boot (top goalscorer) and Golden Glove
+ * (top clean-sheet GK/DEF). Null-safe at 0 matches.
+ */
+export const getTournamentStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const empty = {
+      goldenBoot: null as { playerId: Id<"players">; playerName: string; house: string; goals: number } | null,
+      goldenGlove: null as { playerId: Id<"players">; playerName: string; house: string; cleanSheets: number } | null,
+      matchesPlayed: 0,
+    };
+    try {
+      const mpRows = await ctx.db.query("matchPlayers").collect();
+      const matches = await ctx.db.query("matches").collect();
+      empty.matchesPlayed = matches.filter((m) => m.status === "completed").length;
+      if (mpRows.length === 0) return empty;
+
+      const players = await ctx.db.query("players").collect();
+      const byId = new Map(players.map((p) => [String(p._id), p]));
+
+      const goals = new Map<string, number>();
+      const cleanSheets = new Map<string, number>();
+      for (const mp of mpRows) {
+        const key = String(mp.playerId);
+        goals.set(key, (goals.get(key) ?? 0) + (Number(mp.goals) || 0));
+        if ((Number(mp.saves) || 0) >= 0 && mp.cleanSheet === true) {
+          cleanSheets.set(key, (cleanSheets.get(key) ?? 0) + 1);
+        }
+      }
+
+      let bootId: string | null = null;
+      let bootGoals = 0;
+      for (const [pid, g] of goals) {
+        if (g > bootGoals) { bootGoals = g; bootId = pid; }
+      }
+      if (bootId && bootGoals > 0) {
+        const p = byId.get(bootId);
+        if (p) {
+          empty.goldenBoot = { playerId: p._id, playerName: p.name, house: p.house, goals: bootGoals };
+        }
+      }
+
+      // Golden Glove: most clean sheets among GK/DEF.
+      let gloveId: string | null = null;
+      let gloveCs = 0;
+      for (const [pid, cs] of cleanSheets) {
+        const p = byId.get(pid);
+        if (!p || (p.position !== "GK" && p.position !== "DEF")) continue;
+        if (cs > gloveCs) { gloveCs = cs; gloveId = pid; }
+      }
+      if (gloveId && gloveCs > 0) {
+        const p = byId.get(gloveId);
+        if (p) {
+          empty.goldenGlove = { playerId: p._id, playerName: p.name, house: p.house, cleanSheets: gloveCs };
+        }
+      }
+      return empty;
+    } catch {
+      return empty;
+    }
+  },
+});
+
+/**
+ * Super Admin: finalize (or un-finalize) the tournament. Finalizing unlocks
+ * the Hall of Fame podium app-wide and logs a feed announcement.
+ */
+export const finalizeTournament = mutation({
+  args: { finalized: v.boolean() },
+  handler: async (ctx, { finalized }) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can finalize the tournament.",
+      );
+    }
+    try {
+      const rows = await ctx.db.query("config").collect();
+      const existing = rows.find((r) => r.key === "tournamentFinalized");
+      if (existing) {
+        await ctx.db.patch(existing._id, { value: finalized === true });
+      } else {
+        await ctx.db.insert("config", {
+          key: "tournamentFinalized",
+          value: finalized === true,
+        });
+      }
+      if (finalized === true) {
+        try {
+          await ctx.runMutation(internal.activity.logActivity, {
+            type: "settled",
+            text: `🏆 The tournament has concluded — the Hall of Fame is now live. Thanks for playing!`,
+          });
+        } catch {
+          // feed failure is non-fatal
+        }
+      }
+      return { finalized: finalized === true };
+    } catch {
+      throw new Error("Could not finalize the tournament — please try again.");
     }
   },
 });

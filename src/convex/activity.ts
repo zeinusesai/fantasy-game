@@ -84,7 +84,7 @@ export const getRecentActivity = query({
       const n = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(Math.round(parsedLimit), 50) : 12;
       const all = await ctx.db.query("activityEvents").collect();
       return all
-        .slice()
+        .filter((r) => r.type !== "rank_meta") // machine rows never render
         .sort((a, b) => b.ts - a.ts)
         .slice(0, n);
     } catch {
@@ -128,11 +128,11 @@ export const logRankShifts = internalMutation({
         .map(([uid, pts]) => ({ uid, pts }))
         .sort((a, b) => b.pts - a.pts);
 
-      // Latest previous snapshot (last "rank" event).
+      // Latest previous snapshot (stored as a machine-readable "rank_meta" row).
       const prevRows = await ctx.db
         .query("activityEvents")
         .collect();
-      const prevRankRows = prevRows.filter((r) => r.type === "rank");
+      const prevRankRows = prevRows.filter((r) => r.type === "rank_meta");
       const lastSnapshot = prevRankRows
         .slice()
         .sort((a, b) => b.ts - a.ts)[0];
@@ -176,12 +176,13 @@ export const logRankShifts = internalMutation({
         }
       });
 
-      // Persist events + a fresh machine-readable snapshot.
+      // Persist events + a fresh machine-readable snapshot (rank_meta rows
+      // are filtered out of the public feed).
       for (const ev of events) {
         await ctx.db.insert("activityEvents", { ...ev, type: "rank" } as never);
       }
       await ctx.db.insert("activityEvents", {
-        type: "rank",
+        type: "rank_meta",
         text: JSON.stringify({
           order: ordered.map(({ uid }, i) => ({ uid: String(uid), rank: i + 1 })),
         }),

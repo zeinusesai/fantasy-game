@@ -143,6 +143,7 @@ import {
 import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { MatchControlCenter } from "@/components/MatchControlCenter";
+import { GameweeksTab } from "@/components/GameweeksTab";
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
@@ -249,6 +250,7 @@ export default function Admin() {
               </TabsTrigger>
             )}
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
+            {isSuper && <TabsTrigger value="gameweeks">Gameweeks</TabsTrigger>}
             {isSuper && <TabsTrigger value="users">Users</TabsTrigger>}
             {isSuper && <TabsTrigger value="settings">Settings</TabsTrigger>}
           </TabsList>
@@ -274,6 +276,9 @@ export default function Admin() {
               </TabsContent>
               <TabsContent value="matches" className="mt-4">
                 <MatchesTab />
+              </TabsContent>
+              <TabsContent value="gameweeks" className="mt-4">
+                <GameweeksTab />
               </TabsContent>
               <TabsContent value="users" className="mt-4">
                 <UsersTab />

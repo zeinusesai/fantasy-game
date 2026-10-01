@@ -26,6 +26,7 @@ import {
 import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
+import { WagerDialog } from "@/components/WagerDialog";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -37,14 +38,18 @@ import {
   Loader2,
   Medal,
   Star,
+  Swords,
   Trophy,
   Wallet,
 } from "lucide-react";
 import { useState } from "react";
+import { useMutation } from "convex/react";
+import { toast } from "sonner";
 
 export default function Leaderboard() {
   const { user } = useAuth();
   const leaderboardResult = useQuery(api.managers.getLeaderboard);
+  const awardsResult = useQuery(api.gameweeks.getTournamentAwards);
 
   const rows = leaderboardResult ?? [];
   const loading = leaderboardResult === undefined;
@@ -52,6 +57,9 @@ export default function Leaderboard() {
 
   // Rival Squad Inspector — clicking a team opens the drawer for that manager.
   const [inspectUserId, setInspectUserId] = useState<Id<"users"> | null>(null);
+  // 1v1 wager challenge target.
+  const [wagerTarget, setWagerTarget] = useState<{ id: Id<"users">; username: string; teamName: string } | null>(null);
+  const sendWager = useMutation(api.wagers.sendWager);
 
   return (
     <AppNav>
@@ -95,6 +103,9 @@ export default function Leaderboard() {
                 <TableBody>
                   {rows.map((row) => {
                     const isMe = row.userId === user?._id;
+                    const isGenius = awardsResult?.tacticalGenius?.userId === row.userId;
+                    const isUnlucky = awardsResult?.unluckyManager?.userId === row.userId;
+                    const isDiffMaster = awardsResult?.differentialMaster?.userId === row.userId;
                     const avatar =
                       row.avatar?.startsWith("data:") || row.avatar?.startsWith("http")
                         ? row.avatar
@@ -153,6 +164,16 @@ export default function Leaderboard() {
                                 role={row.role}
                                 customBadge={row.customBadge}
                               />
+                              {/* Tournament award badges — end-of-gameweek. */}
+                              {isGenius && (
+                                <span title="Tactical Genius — top total points" className="shrink-0 rounded-full border border-amber-400/50 bg-amber-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-amber-300">🧠 Genius</span>
+                              )}
+                              {isUnlucky && (
+                                <span title="Unlucky Manager — lowest total points" className="shrink-0 rounded-full border border-slate-400/50 bg-slate-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-slate-300">💔 Unlucky</span>
+                              )}
+                              {isDiffMaster && (
+                                <span title="Differential Master — most points from <15% owned players" className="shrink-0 rounded-full border border-fuchsia-400/50 bg-fuchsia-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-fuchsia-300">🎯 Diff Master</span>
+                              )}
                             </span>
                             <Eye className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
                             {row.rank === 1 && row.totalPoints > 0 && (
@@ -171,6 +192,15 @@ export default function Leaderboard() {
                               role={row.role}
                               customBadge={row.customBadge}
                             />
+                            {!isMe && (
+                              <button
+                                title={`Challenge @${row.username} to a 1v1 point wager`}
+                                onClick={() => setWagerTarget({ id: row.userId, username: row.username, teamName: row.teamName })}
+                                className="text-violet-300 transition-colors hover:text-violet-200"
+                              >
+                                <Swords className="size-3.5" />
+                              </button>
+                            )}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -213,6 +243,23 @@ export default function Leaderboard() {
           onClose={() => setInspectUserId(null)}
         />
       )}
+
+      {/* 1v1 H2H point wager challenge dialog */}
+      <WagerDialog
+        target={wagerTarget}
+        onClose={() => setWagerTarget(null)}
+        onSend={async (stake, stage) => {
+          if (!wagerTarget) return false;
+          try {
+            await sendWager({ opponentId: wagerTarget.id, stake, stage });
+            toast.success(`Challenge sent to @${wagerTarget.username} — ${stake} pts on Gameweek ${stage === "semifinal1" || stage === "semifinal2" ? "1" : "2"}!`);
+            return true;
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Could not send the challenge.");
+            return false;
+          }
+        }}
+      />
     </AppNav>
   );
 }

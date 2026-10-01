@@ -24,11 +24,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatMoney, parseMoneyInput, safeBudget } from "@/convex/configDefaults";
+import { CHIP_GW1, CHIP_GW2 } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { PickedByDialog } from "@/components/PickedByDialog";
+import { downloadShareCard } from "@/lib/shareCard";
+import { Share2, Zap, Lock } from "lucide-react";
 import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
@@ -134,8 +138,85 @@ export default function SquadBuilder() {
   // ── Player details modal state ──
   const [detailFor, setDetailFor] = useState<PlayerRow | null>(null);
 
+  // ── Player of the Week highlight (top scorer from the awards query) ──
+  const awards = useQuery(api.gameweeks.getTournamentAwards);
+  const potwId: string | null = awards?.playerOfTheWeek?.playerId ?? null;
+
   // ── Manager pick inspection ("Picked by …") state ──
   const [pickedByFor, setPickedByFor] = useState<PlayerRow | null>(null);
+
+  // ── Deadline read-only mode + one-time Double Down chip ──
+  const gwStatus = useQuery(api.gameweeks.getGameweekStatus);
+  const chipStatus = useQuery(api.squads.getMyChip) ?? { chip: null, used: false, available: false };
+  const activateChip = useMutation(api.gameweeks.activateChip);
+  const deactivateChip = useMutation(api.gameweeks.deactivateChip);
+  const chipBusy = useState(false);
+  const setChipBusy = chipBusy[1];
+
+  // Read-only when any stage is past its deadline, locked or settled.
+  const readOnly = (() => {
+    try {
+      const byStage = gwStatus?.byStage ?? {};
+      for (const state of Object.values(byStage)) {
+        if (!state) continue;
+        if (state.settled === true || state.locked === true) return true;
+        if (typeof state.deadlineAt === "number" && Date.now() > state.deadlineAt) return true;
+      }
+      return false;
+    } catch {
+      return false; // fail-open: never soft-lock the builder on a query error
+    }
+  })();
+
+  const handleToggleChip = async () => {
+    setChipBusy(true);
+    try {
+      if (chipStatus.chip) {
+        await deactivateChip({});
+        toast.success("Double Down chip removed.");
+      } else {
+        // Arm GW1 while its stages are still open; otherwise GW2. The server
+        // re-validates the deadline/settle state for the chosen gameweek.
+        const gw1Settled = gwStatus?.byStage?.semifinal1?.settled === true;
+        const gw1Expired =
+          typeof gwStatus?.byStage?.semifinal1?.deadlineAt === "number" &&
+          Date.now() > (gwStatus.byStage.semifinal1.deadlineAt as number);
+        const target = gw1Settled || gw1Expired ? CHIP_GW2 : CHIP_GW1;
+        await activateChip({ chip: target });
+        toast.success(
+          `Double Down activated for Gameweek ${target === CHIP_GW1 ? "1" : "2"} — those points count double!`,
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the chip.");
+    } finally {
+      setChipBusy(false);
+    }
+  };
+
+  const handleShareTeam = () => {
+    try {
+      const ok = downloadShareCard({
+        teamName: user?.teamName ?? "My Squad",
+        username: user?.username ?? "manager",
+        players: selectedPlayers.map((p) => ({
+          name: p.name,
+          position: p.position,
+          house: p.house,
+          isCaptain: captainId === p._id,
+        })),
+        captainId,
+        totalPoints: undefined,
+      });
+      if (ok) {
+        toast.success("Squad card downloaded — ready to share!");
+      } else {
+        toast.error("Sharing is not supported on this device.");
+      }
+    } catch {
+      toast.error("Could not generate the squad card.");
+    }
+  };
 
   const parsedReqPrice = parseMoneyInput(reqPrice);
   const reqValid =
@@ -245,6 +326,10 @@ export default function SquadBuilder() {
   if (!captainId && selected.length === 7) problems.push("Choose a captain.");
 
   const toggle = (id: Id<"players">) => {
+    if (readOnly) {
+      toast.error("Transfers are locked — the deadline has passed.");
+      return;
+    }
     if (selected.includes(id)) {
       setSelected((s) => s.filter((x) => x !== id));
       if (captainId === id) setCaptainId(null);
@@ -310,22 +395,47 @@ export default function SquadBuilder() {
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h1 className="font-display text-3xl font-bold tracking-tight">Squad builder</h1>
+              <h1 className="font-display flex flex-wrap items-center gap-2 text-3xl font-bold tracking-tight">
+                Squad builder
+                {readOnly && (
+                  <Badge variant="outline" className="gap-1 border-red-400/50 bg-red-500/10 text-red-300">
+                    <Lock className="size-3" /> READ-ONLY · deadline passed
+                  </Badge>
+                )}
+              </h1>
               <p className="text-muted-foreground text-sm">
                 7 starters · 1 GK / 2 DEF / 2 MID / 2 FWD · max {houseLimit} per house · within budget
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* One-time Double Down chip */}
+              {!chipStatus.used && (
+                <Button
+                  variant={chipStatus.chip ? "default" : "outline"}
+                  onClick={handleToggleChip}
+                  disabled={chipBusy[0] || readOnly || (!chipStatus.available && !chipStatus.chip)}
+                  title="Once per tournament: doubles one gameweek's points"
+                >
+                  <Zap className={cn("mr-1.5 size-4", chipStatus.chip && "animate-pulse text-amber-300")} />
+                  {chipStatus.chip
+                    ? `Double Down ON (${chipStatus.chip === CHIP_GW1 ? "GW1" : "GW2"})`
+                    : "Play Double Down"}
+                </Button>
+              )}
+              <Button variant="outline" onClick={handleShareTeam} title="Download a shareable squad card">
+                <Share2 className="mr-1.5 size-4" /> Share Team
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => {
                   setSelected(mySquad?.players.map((p) => p._id) ?? []);
                   setCaptainId(mySquad?.captainId ?? null);
                 }}
+                disabled={readOnly}
               >
                 <RotateCcw className="mr-1.5 size-4" /> Reset
               </Button>
-              <Button onClick={handleSave} disabled={saving || problems.length > 0}>
+              <Button onClick={handleSave} disabled={saving || problems.length > 0 || readOnly}>
                 {saving ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Check className="mr-1.5 size-4" />}
                 Save squad
               </Button>
@@ -532,6 +642,11 @@ export default function SquadBuilder() {
                               : affordable
                                 ? "border-border/70 bg-secondary/40 hover:border-primary/40"
                                 : "border-border/40 bg-secondary/20 opacity-50"
+                          } ${
+                            // Player of the Week: distinct golden frame.
+                            potwId !== null && String(p._id) === String(potwId)
+                              ? "ring-2 ring-amber-400/80 shadow-[0_0_16px_rgba(251,191,36,0.35)]"
+                              : ""
                           }`}
                         >
                           <div className="flex min-w-0 items-start gap-2">
@@ -562,6 +677,12 @@ export default function SquadBuilder() {
                               {pendingReq && (
                                 <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
                                   <Coins className="size-3" /> price review pending
+                                </span>
+                              )}
+                              {/* Player of the Week crown badge */}
+                              {potwId !== null && String(p._id) === String(potwId) && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-gradient-to-r from-amber-400/25 to-yellow-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-200">
+                                  👑 Player of the Week
                                 </span>
                               )}
                               {mostPicked && String(mostPicked.playerId) === String(p._id) && (

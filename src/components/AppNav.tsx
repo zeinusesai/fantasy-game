@@ -12,6 +12,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
+import { useDeadlineBanner } from "@/hooks/use-deadline";
 import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -29,6 +30,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useNavigate, NavLink } from "react-router";
+import { Bell } from "lucide-react";
 
 const LINKS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -45,6 +47,7 @@ export function AppNav({ children }: { children: ReactNode }) {
   const avatar = user?.image?.startsWith("data:") || user?.image?.startsWith("http")
     ? user.image
     : avatarPresetUrl(user?.image);
+  const deadline = useDeadlineBanner();
 
   // Maintenance flag — safe default while loading / when unset.
   const statusResult = useQuery(api.system.getMaintenanceStatus);
@@ -108,6 +111,26 @@ export function AppNav({ children }: { children: ReactNode }) {
             )}
           </nav>
 
+          {/* One-click PWA alert opt-in (feature-detected, fail-silent). */}
+          {typeof window !== "undefined" && "Notification" in window && Notification.permission === "default" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Enable deadline & result alerts"
+              onClick={async () => {
+                try {
+                  const { requestNotificationPermission } = await import("@/lib/notifications");
+                  await requestNotificationPermission();
+                } catch {
+                  // notifications unsupported — silently ignore
+                }
+              }}
+            >
+              <Bell className="size-4" />
+              <span className="hidden lg:inline text-xs">Alerts</span>
+            </Button>
+          )}
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="gap-2 px-2">
@@ -168,6 +191,21 @@ export function AppNav({ children }: { children: ReactNode }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* 🚨 Panic banner — any deadline < 60 min away (all signed-in users). */}
+        {deadline.panic && deadline.minutesLeft !== null && (
+          <div className="border-b border-red-500/50 bg-red-600/20 backdrop-blur-md">
+            <div className="mx-auto flex w-full max-w-7xl items-center justify-center gap-2 px-4 py-1.5">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex size-2 rounded-full bg-red-400" />
+              </span>
+              <span className="animate-pulse text-[11px] font-black uppercase tracking-[0.18em] text-red-300">
+                🚨 Transfers lock in {deadline.minutesLeft} min{deadline.minutesLeft === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Pulsing banner — staff only, and only while maintenance is active. */}
         {isMaintenanceMode && isAdmin && (
