@@ -1,6 +1,6 @@
-import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { HouseDot, PositionChip, RatingBadge } from "./houses";
+import { HouseDot, RatingBadge } from "./houses";
+import { PlayerAvatar, type PhotoSource } from "./PlayerAvatar";
 import type { House, Position } from "@/convex/schema";
 
 export type PitchPlayer = {
@@ -9,7 +9,10 @@ export type PitchPlayer = {
   position: Position;
   house: House;
   price?: number;
+  /** Custom player photo (URL or data URL) — the whole card is null-safe. */
   image?: string | null;
+  /** Legacy alias so older lineup payloads still render their photo. */
+  photoUrl?: string | null;
   rating?: number | null;
   isCaptain?: boolean;
   isPotm?: boolean;
@@ -31,15 +34,13 @@ export function PlayerBadge({
   player,
   size = 64,
 }: {
-  player: Pick<PitchPlayer, "name" | "position" | "isCaptain"> & {
-    image?: string | null;
+  player: PhotoSource & {
+    name: string;
+    position: Position;
+    isCaptain?: boolean;
   };
   size?: number;
 }) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const photo = typeof player.image === "string" && player.image.length > 0 ? player.image : null;
-  const showPhoto = photo !== null && !imgFailed;
-
   return (
     <div
       className={cn(
@@ -50,29 +51,14 @@ export function PlayerBadge({
       )}
       style={{ width: size, height: size }}
     >
-      {showPhoto ? (
-        <img
-          src={photo}
-          alt={player.name}
-          className="absolute inset-0 size-full object-cover"
-          onError={() => setImgFailed(true)}
-          loading="lazy"
-        />
-      ) : (
-        <>
-          <span className="text-sm font-bold text-white">
-            {player.isCaptain ? "C" : player.name.slice(0, 2).toUpperCase()}
-          </span>
-          <span className="text-[9px] font-semibold uppercase tracking-wide text-white/70">
-            {player.position}
-          </span>
-        </>
-      )}
-      {showPhoto && (
-        <span className="absolute bottom-0 w-full bg-black/55 text-center text-[8px] font-bold uppercase tracking-wide text-white/85">
-          {player.isCaptain ? "(C)" : player.position}
-        </span>
-      )}
+      {/* Shared avatar: custom photo (`image` → `photoUrl`) with an initials +
+          position placeholder on error, so a broken URL never shows up. */}
+      <PlayerAvatar
+        player={player}
+        size={size}
+        showPosition
+        className="absolute inset-0 size-full ring-0 ring-offset-0"
+      />
       {/* Golden captain armband frame */}
       {player.isCaptain && (
         <span
@@ -144,7 +130,7 @@ export function PitchView({
                   return (
                     <div key={p.playerId} className="flex flex-col items-center gap-1">
                       <div className="relative">
-                        <PlayerBadge player={p} />
+                        <PlayerBadge player={p} size={64} />
                         {p.isPotm && (
                           <span
                             className="absolute -right-1 -top-1 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"

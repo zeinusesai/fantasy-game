@@ -5,6 +5,7 @@ import type { Doc, Id } from "@/convex/_generated/dataModel";
 import type { House, MatchStatus } from "@/convex/schema";
 import { HOUSES, STAGE_LABELS } from "@/lib/fantasy";
 import { HouseBadge, PositionChip, RatingBadge } from "@/components/houses";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -377,12 +378,14 @@ export function MatchControlCenter() {
                         <button
                           key={p._id}
                           onClick={() => toggleStarter(side.list, side.setList, String(p._id))}
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-all ${
+                          className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2.5 text-xs font-medium ring-1 transition-all ${
                             side.list.includes(String(p._id))
                               ? "bg-primary/20 text-primary ring-primary/50"
                               : "bg-secondary text-secondary-foreground ring-border hover:ring-primary/40"
                           }`}
                         >
+                          {/* Custom photo with initials fallback — never a broken image. */}
+                          <PlayerAvatar player={p} size={20} className="ring-0" />
                           {p.name}
                         </button>
                       ))}
@@ -502,6 +505,7 @@ export function MatchControlCenter() {
                       setRatings((prev) => ({ ...prev, [pid]: { ...r, ...v } }));
                     return (
                       <div key={pid} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/60 bg-background/40 p-2">
+                        <PlayerAvatar player={p} size={22} className="ring-0" />
                         <span className="min-w-28 flex-1 truncate text-xs font-semibold">
                           {p?.name ?? "Player"}
                           {p && <PositionChip position={p.position} />}

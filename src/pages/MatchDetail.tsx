@@ -22,7 +22,7 @@ import {
   Users,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
-import { useState } from "react";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type PlayerDoc = Doc<"players">;
@@ -40,34 +40,17 @@ const awayLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.awayStarters ?
 /**
  * Small circular player photo. Falls back to initials when no custom photo
  * is set or the URL fails to load — never renders a broken image.
+ * Thin wrapper over the shared `PlayerAvatar` so match lineups, the timeline
+ * and the pitch all resolve photos the exact same way.
  */
 function PlayerMiniPhoto({
   player,
   sizeClass = "size-7",
 }: {
-  player: { name: string; image?: string | null };
+  player: { name: string; image?: string | null; photoUrl?: string | null };
   sizeClass?: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const src = player.image ?? null;
-  if (!src || failed) {
-    return (
-      <span
-        className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-slate-800 text-[9px] font-bold text-white ring-1 ring-white/25`}
-      >
-        {player.name.slice(0, 2).toUpperCase()}
-      </span>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt={player.name}
-      className={`${sizeClass} shrink-0 rounded-full object-cover ring-1 ring-white/25`}
-      onError={() => setFailed(true)}
-      loading="lazy"
-    />
-  );
+  return <PlayerAvatar player={player} className={sizeClass} />;
 }
 
 /** FotMob-style rating colour: high = green, mid = neutral, low = red. */

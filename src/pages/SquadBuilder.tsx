@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { PitchView } from "@/components/PitchView";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { HouseBadge, HouseCrest, PositionChip, useHouseName } from "@/components/houses";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { Badge } from "@/components/ui/badge";
@@ -59,24 +60,10 @@ function MarketPhoto({
   player: { name: string; position: Position; image?: string | null };
   sizeClass?: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const src = player.image ?? null;
-  if (!src || failed) {
-    return (
-      <span
-        className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-slate-900/85 text-[10px] font-bold text-white ring-1 ring-white/30`}
-      >
-        {player.name.slice(0, 2).toUpperCase()}
-      </span>
-    );
-  }
   return (
-    <img
-      src={src}
-      alt={player.name}
-      className={`${sizeClass} shrink-0 rounded-full object-cover ring-1 ring-white/30`}
-      onError={() => setFailed(true)}
-      loading="lazy"
+    <PlayerAvatar
+      player={player}
+      className={`${sizeClass} bg-slate-900/85 ring-white/30`}
     />
   );
 }
@@ -375,6 +362,8 @@ export default function SquadBuilder() {
         name: p.name,
         position: p.position,
         house: p.house,
+        // Pass the custom photo through to the pitch card (null-safe).
+        image: p.image ?? null,
         isCaptain: captainId === p._id,
       });
       return acc;
@@ -384,6 +373,7 @@ export default function SquadBuilder() {
       name: string;
       position: Position;
       house: House;
+      image: string | null;
       isCaptain: boolean;
     }>>,
   );
@@ -569,12 +559,13 @@ export default function SquadBuilder() {
                         <button
                           key={p._id}
                           onClick={() => setCaptainId(p._id)}
-                          className={`rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition-all ${
+                          className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold ring-1 transition-all ${
                             captainId === p._id
                               ? "bg-amber-400/20 text-amber-300 ring-amber-400/50"
-                              : "bg-secondary text-secondary-foreground ring-border hover:border-primary/40"
+                              : "bg-secondary text-secondary-foreground ring-border hover:ring-primary/40"
                           }`}
                         >
+                          <PlayerAvatar player={p} size={22} className="ring-0" />
                           {p.name}
                         </button>
                       ))}
