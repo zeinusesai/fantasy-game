@@ -314,7 +314,56 @@ const schema = defineSchema(
 
       // ── Year 12 celebration copy ──
       year12Message: v.optional(v.string()),
+
+      // ── House branding: { Fire: { name, color, logoUrl, motto } } ──
+      houses: v.optional(v.any()),
+
+      // ── Award definitions incl. icons + point thresholds ──
+      awards: v.optional(v.any()),
+
+      // ── Budget & market rules (prices in plain dollars) ──
+      marketRules: v.optional(v.any()),
+
+      // ── Scoring rule matrix (overrides SCORING_RULES in points.ts) ──
+      scoringRules: v.optional(v.any()),
+
+      // ── UI text & branding ──
+      uiText: v.optional(v.any()),
+
+      // ── Master switch: false = squad builder is read-only for everyone ──
+      editableSquads: v.optional(v.boolean()),
+
+      // ── Maintenance screen copy ──
+      maintenanceMessage: v.optional(v.string()),
     }),
+
+    // ===== Super Admin audit log =====
+    // Every privileged action is appended here so a misconfiguration can
+    // always be traced back to who made it and when.
+    auditLog: defineTable({
+      ts: v.number(),
+      actor: v.optional(v.string()), // username, baked so deleted admins survive
+      actorUserId: v.optional(v.id("users")),
+      category: v.optional(v.string()), // config | user | points | tournament | bulk | auth
+      action: v.string(), // e.g. "set_house_names"
+      target: v.optional(v.string()), // affected user / key / entity
+      detail: v.optional(v.string()), // human-readable summary
+    })
+      .index("by_ts", ["ts"])
+      .index("by_category", ["category"]),
+
+    // ===== Manual point adjustments (bonus / penalty) =====
+    // Kept separate from matchScores so the reason log survives a
+    // "Reset All Points" and can be re-applied or audited independently.
+    pointAdjustments: defineTable({
+      userId: v.id("users"),
+      points: v.number(), // positive = bonus, negative = penalty
+      reason: v.string(),
+      createdAt: v.number(),
+      actor: v.optional(v.string()),
+    })
+      .index("by_user", ["userId"])
+      .index("by_created", ["createdAt"]),
 
     // ===== Tournament award snapshot (singleton row) =====
     // Rewritten by `recalculateAwards` after every match update, so awards

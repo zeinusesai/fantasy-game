@@ -80,10 +80,20 @@ export function normalizeUsername(raw: string): string {
  * corrupt value would otherwise silently PASS every squad budget check.
  * The result is always finite and non-negative.
  */
-export function safeBudget(value?: number | null): number {
-  if (typeof value !== "number") return FIXED_MANAGER_BUDGET;
-  if (!Number.isFinite(value) || value <= 0) return FIXED_MANAGER_BUDGET;
-  return Math.min(Math.round(value), FIXED_MANAGER_BUDGET);
+export function safeBudget(
+  value?: number | null,
+  fallback: number = FIXED_MANAGER_BUDGET,
+): number {
+  const fb =
+    typeof fallback === "number" && Number.isFinite(fallback) && fallback > 0
+      ? Math.round(fallback)
+      : FIXED_MANAGER_BUDGET;
+  if (typeof value !== "number") return fb;
+  if (!Number.isFinite(value) || value <= 0) return fb;
+  // NOTE: no upper clamp here — clamping to the Super-Admin's configured
+  // window is `resolveManagerBudget`'s job (it knows the live max). This
+  // function only guarantees the value is finite, positive and integral.
+  return Math.round(value);
 }
 
 /**

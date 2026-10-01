@@ -161,12 +161,15 @@ export default function SquadBuilder() {
   const chipBusy = useState(false);
   const setChipBusy = chipBusy[1];
 
-  // Read-only when the server says transfers are closed. The server is the
-  // single authority (same helper it uses in saveSquad), so the UI can never
-  // disagree with what the backend will actually accept.
+  // Read-only when the server says transfers are closed, OR when the Super
+  // Admin has flipped the platform-wide master switch. The server is the
+  // single authority for the deadline half (same helper it uses in
+  // saveSquad); `editableSquads` mirrors the same config flag the backend
+  // checks, so the UI can never disagree with what will actually be accepted.
+  const { editableSquads } = useAdminConfig();
   const readOnly = (() => {
     try {
-      return gwStatus?.lockReason != null;
+      return gwStatus?.lockReason != null || editableSquads === false;
     } catch {
       return false; // fail-open: never soft-lock the builder on a query error
     }
@@ -408,13 +411,19 @@ export default function SquadBuilder() {
                 Squad builder
                 {readOnly && (
                   <Badge variant="outline" className="gap-1 border-red-400/50 bg-red-500/10 text-red-300">
-                    <Lock className="size-3" /> READ-ONLY · {gwStatus?.lockReason ?? "transfers closed"}
+                    <Lock className="size-3" /> READ-ONLY · {editableSquads === false ? "locked by admin" : (gwStatus?.lockReason ?? "transfers closed")}
                   </Badge>
                 )}
               </h1>
               <p className="text-muted-foreground text-sm">
                 7 starters · 1 GK / 2 DEF / 2 MID / 2 FWD · max {houseLimit} per house · within budget
               </p>
+              {readOnly && editableSquads === false && (
+                <p className="text-destructive mt-1.5 text-xs">
+                  The Super Admin has locked the Squad Builder platform-wide. Your current squad is
+                  still saved and viewable.
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {/* One-time Double Down chip */}

@@ -8,9 +8,11 @@ import {
   HOUSES,
   HOUSE_DESCRIPTIONS,
   HOUSE_GRADIENTS,
-  SCORING_RULE_LINES,
+  scoringRuleLines,
 } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
+import { useAdminConfig } from "@/hooks/use-admin-config";
+import { useHouseName } from "@/components/houses";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -26,6 +28,10 @@ import { Link, useNavigate } from "react-router";
 
 export default function Landing() {
   const { isAuthenticated } = useAuth();
+  // Live scoring matrix — the Super Admin can retune every value from the
+  // Customization tab, so the public rules table must reflect the config.
+  const { scoringRules, uiText, houseBrand } = useAdminConfig();
+  const houseName = useHouseName();
   const navigate = useNavigate();
   const leaderboard = useQuery(api.managers.getLeaderboard);
   const top = (leaderboard ?? []).slice(0, 3);
@@ -183,8 +189,12 @@ export default function Landing() {
                 <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
                   <HouseCrest house={house} size={64} />
                   <div>
-                    <h3 className="font-display text-xl font-bold">{house}</h3>
-                    <p className="text-muted-foreground mt-1 text-sm">{HOUSE_DESCRIPTIONS[house]}</p>
+                    <h3 className="font-display text-xl font-bold">{houseName(house)}</h3>
+                    {/* The Super-Admin editable motto, falling back to the
+                        built-in house description when none is configured. */}
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      {houseBrand(house).motto || HOUSE_DESCRIPTIONS[house]}
+                    </p>
                   </div>
                 </CardContent>
               </Card>
@@ -233,7 +243,7 @@ export default function Landing() {
           <p className="text-muted-foreground mt-1 text-sm">Fantasy points, straight from the match report.</p>
           <Card className="mt-6">
             <CardContent className="grid grid-cols-2 gap-x-6 gap-y-2 p-6 text-sm sm:grid-cols-3 lg:grid-cols-2">
-              {SCORING_RULE_LINES.map((rule) => (
+              {scoringRuleLines(scoringRules).map((rule) => (
                 <div key={rule.label} className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">{rule.label}</span>
                   <span

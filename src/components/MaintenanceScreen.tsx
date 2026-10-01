@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, Instagram, Loader2, Lock, RefreshCw, Settings, Wrench } from "lucide-react";
 import { OwnershipWatermark } from "@/components/OwnershipWatermark";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 
 /**
  * Full-screen maintenance lockout for standard (non-admin) visitors.
@@ -15,6 +16,11 @@ export function MaintenanceScreen() {
   const navigate = useNavigate();
   const [checking, setChecking] = useState(false);
   const [stillDown, setStillDown] = useState<boolean | null>(null);
+
+  // All copy on this screen is Super-Admin editable. `useAdminConfig` layers
+  // the hardcoded defaults under the server response, so a missing or corrupt
+  // field renders the built-in text instead of `undefined`.
+  const { uiText, instagramUrl } = useAdminConfig();
 
   const checkStatus = async () => {
     setChecking(true);
@@ -44,19 +50,19 @@ export function MaintenanceScreen() {
 
         <div className="space-y-2">
           <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
-            System Maintenance in Progress
+            {uiText.maintenanceTitle}
           </h1>
           <p className="text-muted-foreground text-sm leading-relaxed sm:text-base">
-            The website is currently in maintenance, need anything? Contact{" "}
-            <span className="text-primary font-semibold">Zein</span>. It will
-            probably be up in a few minutes!
+            {uiText.maintenanceMessage}
           </p>
           {/* Direct Instagram contact — plain anchor (no router involvement,
               so it can never interfere with the status-check query or any
-              client-side navigation). rel is defense-in-depth on top of
-              target="_blank"; a malformed URL can't happen (hardcoded). */}
+              client-side navigation). The href is built by useAdminConfig,
+              which only ever emits an https://instagram.com/<handle> URL from
+              a sanitized handle; rel is defense-in-depth on top of
+              target="_blank". */}
           <a
-            href="https://www.instagram.com/zein.e9"
+            href={instagramUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="group mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#f58529] via-[#dd2a7b] to-[#8134af] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-pink-900/30 transition-all hover:scale-[1.03] hover:shadow-pink-700/40 focus-visible:ring-2 focus-visible:ring-pink-400 focus-visible:outline-none"

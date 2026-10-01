@@ -1,6 +1,15 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { HOUSES } from "@/lib/fantasy";
+import {
+  APP_DEFAULTS,
+  DEFAULT_HOUSES,
+  DEFAULT_MARKET_RULES,
+  DEFAULT_SCORING_RULES,
+  type AwardDef,
+  type HouseBrand,
+  type ScoringRules,
+} from "@/convex/defaults";
 
 // ── Global customization, client side ────────────────────────────────────
 //
@@ -24,6 +33,8 @@ export const FALLBACK_HOUSE_NAMES: Record<string, string> = {
   Water: "Water",
 };
 
+export const FALLBACK_HOUSES: Record<string, HouseBrand> = { ...DEFAULT_HOUSES };
+
 export const FALLBACK_AWARD_TITLES: Record<
   string,
   { title: string; description: string }
@@ -45,6 +56,18 @@ export const FALLBACK_AWARD_TITLES: Record<
     description: "Highest-scoring player of the latest gameweek.",
   },
 };
+
+export const FALLBACK_BADGES: Record<string, AwardDef> = {
+  tacticalGenius: { title: "Tactical Genius", icon: "🧠", description: "Highest total points of the tournament.", threshold: 0 },
+  unluckyManager: { title: "Unlucky Manager", icon: "💔", description: "Lowest total points of the tournament.", threshold: 0 },
+  differentialMaster: { title: "Differential Master", icon: "🎯", description: "Most points from players owned by under 15% of managers.", threshold: 0 },
+  playerOfTheWeek: { title: "Player of the Week", icon: "👑", description: "Highest-scoring player of the latest gameweek.", threshold: 0 },
+  goldenBoot: { title: "Golden Boot", icon: "🥾", description: "Top goalscorer of the tournament.", threshold: 0 },
+  goldenGlove: { title: "Golden Glove", icon: "🧤", description: "Most clean sheets by a goalkeeper or defender.", threshold: 0 },
+};
+
+export const FALLBACK_MARKET_RULES = { ...DEFAULT_MARKET_RULES };
+export const FALLBACK_SCORING_RULES: ScoringRules = { ...DEFAULT_SCORING_RULES };
 
 export const FALLBACK_BADGE_REGISTRY: Record<
   string,
@@ -77,6 +100,24 @@ export function useAdminConfig() {
     ...FALLBACK_BADGE_REGISTRY,
   };
   const budgetOverrides: Record<string, number> = {};
+
+  // Rich config blocks, each layered key-by-key over its hardcoded default.
+  const houses: Record<string, HouseBrand> = { ...FALLBACK_HOUSES };
+  const awards: Record<string, AwardDef> = { ...FALLBACK_BADGES };
+  const marketRules = { ...FALLBACK_MARKET_RULES };
+  const scoringRules: ScoringRules = { ...FALLBACK_SCORING_RULES };
+  const uiText = {
+    appTitle: APP_DEFAULTS.appTitle,
+    appTagline: APP_DEFAULTS.appTagline,
+    maintenanceTitle: APP_DEFAULTS.maintenanceTitle,
+    maintenanceMessage: APP_DEFAULTS.maintenanceMessage,
+    instagramHandle: APP_DEFAULTS.instagramHandle,
+    year12Banner: APP_DEFAULTS.year12Banner,
+    year12Message: APP_DEFAULTS.year12Message,
+    goldMedalText: APP_DEFAULTS.goldMedalText,
+    goldMedalHeadline: APP_DEFAULTS.goldMedalHeadline,
+    forfeitText: APP_DEFAULTS.forfeitText,
+  };
 
   const rawAwards = (result?.awardTitles ?? null) as Record<
     string,
@@ -129,16 +170,98 @@ export function useAdminConfig() {
         }
       }
     }
+
+    // House branding (name/color/logo/motto).
+    if (result.houses && typeof result.houses === "object") {
+      for (const house of HOUSES) {
+        const entry = (result.houses as Record<string, unknown>)[house];
+        if (!entry || typeof entry !== "object") continue;
+        const h = entry as Partial<HouseBrand>;
+        houses[house] = {
+          name: typeof h.name === "string" && h.name.length > 0 ? h.name : houses[house].name,
+          color: typeof h.color === "string" && /^#[0-9a-fA-F]{6}$/.test(h.color) ? h.color : houses[house].color,
+          logoUrl: typeof h.logoUrl === "string" ? h.logoUrl : houses[house].logoUrl,
+          motto: typeof h.motto === "string" && h.motto.length > 0 ? h.motto : houses[house].motto,
+        };
+      }
+    }
+
+    // Award definitions (title/icon/description/threshold).
+    if (result.awards && typeof result.awards === "object") {
+      for (const [key, entry] of Object.entries(result.awards as Record<string, unknown>)) {
+        if (!entry || typeof entry !== "object") continue;
+        const a = entry as Partial<AwardDef>;
+        const base = awards[key] ?? {
+          title: key,
+          icon: "🏅",
+          description: "",
+          threshold: 0,
+        };
+        awards[key] = {
+          title: typeof a.title === "string" && a.title.length > 0 ? a.title : base.title,
+          icon: typeof a.icon === "string" && a.icon.length > 0 ? a.icon : base.icon,
+          description: typeof a.description === "string" ? a.description : base.description,
+          threshold:
+            typeof a.threshold === "number" && Number.isFinite(a.threshold)
+              ? a.threshold
+              : base.threshold,
+        };
+      }
+    }
+
+    // Market rules — every numeric field guarded.
+    if (result.marketRules && typeof result.marketRules === "object") {
+      const m = result.marketRules as unknown as Record<string, unknown>;
+      const target = marketRules as unknown as Record<string, number>;
+      for (const key of Object.keys(target)) {
+        const value = m[key];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          target[key] = value;
+        }
+      }
+    }
+
+    // Scoring matrix — every numeric field guarded.
+    if (result.scoringRules && typeof result.scoringRules === "object") {
+      const s = result.scoringRules as unknown as Record<string, unknown>;
+      const target = scoringRules as unknown as Record<string, number>;
+      for (const key of Object.keys(target)) {
+        const value = s[key];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          target[key] = value;
+        }
+      }
+    }
+
+    // UI text.
+    if (result.uiText && typeof result.uiText === "object") {
+      const u = result.uiText as unknown as Record<string, unknown>;
+      const target = uiText as unknown as Record<string, string>;
+      for (const key of Object.keys(target)) {
+        const value = u[key];
+        if (typeof value === "string" && value.trim().length > 0) {
+          target[key] = value;
+        }
+      }
+    }
   }
 
   return {
     /** Raw query handle: `undefined` while loading. */
     loading: result === undefined,
     houseNames,
+    houses,
     awardTitles,
+    awards,
     badgeRegistry,
     budgetOverrides,
+    marketRules,
+    scoringRules,
+    uiText,
+    instagramUrl: `https://www.instagram.com/${encodeURIComponent(uiText.instagramHandle)}`,
     isMaintenanceMode: result?.isMaintenanceMode === true,
+    /** Master switch: false = every manager's squad builder is read-only. */
+    editableSquads: result?.editableSquads !== false,
     tournamentEnded: result?.tournamentEnded === true,
     tournamentEndedAt:
       typeof result?.tournamentEndedAt === "number" ? result.tournamentEndedAt : null,
@@ -149,12 +272,12 @@ export function useAdminConfig() {
 
     /**
      * Display name for a house. Always returns a non-empty string — the
-     * exact `config?.houseNames?.[house] ?? defaultHouseName` pattern the
+     * exact `config?.houses?.[houseId]?.name ?? defaultHouseName` pattern the
      * spec asks for, wrapped so no call site can forget the fallback.
      */
     houseName: (house: string | null | undefined): string => {
       if (typeof house !== "string" || house.length === 0) return "Unknown house";
-      return houseNames[house] ?? FALLBACK_HOUSE_NAMES[house] ?? house;
+      return houses[house]?.name ?? houseNames[house] ?? FALLBACK_HOUSE_NAMES[house] ?? house;
     },
 
     /** Customisable award copy, falling back to the built-in title. */
@@ -162,6 +285,31 @@ export function useAdminConfig() {
       key: string,
     ): { title: string; description: string } =>
       awardTitles[key] ?? FALLBACK_AWARD_TITLES[key] ?? { title: key, description: "" },
+
+    /** Full award definition incl. icon + threshold. Never undefined. */
+    awardDef: (key: string): AwardDef =>
+      awards[key] ??
+      FALLBACK_BADGES[key] ??
+      { title: key, icon: "🏅", description: "", threshold: 0 },
+
+    /** Full house brand (name, color, logo, motto). Never undefined. */
+    houseBrand: (house: string | null | undefined): HouseBrand =>
+      (typeof house === "string" ? houses[house] : undefined) ??
+      FALLBACK_HOUSES[String(house)] ?? {
+        name: typeof house === "string" && house.length > 0 ? house : "Unknown house",
+        color: "#64748b",
+        logoUrl: "",
+        motto: "",
+      },
+
+    /** Effective budget for a manager (override → global default). */
+    budgetFor: (userId: string | null | undefined): number => {
+      const override = userId ? budgetOverrides[userId] : undefined;
+      if (typeof override === "number" && Number.isFinite(override) && override > 0) {
+        return Math.min(override, marketRules.maxBudget);
+      }
+      return marketRules.defaultBudget;
+    },
 
     /**
      * Badge metadata for a stored badge key. Unknown / missing keys resolve

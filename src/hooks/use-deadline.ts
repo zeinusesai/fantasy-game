@@ -2,6 +2,8 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useEffect, useState } from "react";
 import { scheduleDeadlineReminder } from "@/lib/notifications";
+import { useAdminConfig } from "@/hooks/use-admin-config";
+import { DEFAULT_MARKET_RULES } from "@/convex/defaults";
 
 export type DeadlineState = {
   /** The closest future deadline across all stages (epoch ms), or null. */
@@ -12,7 +14,10 @@ export type DeadlineState = {
   gameweek: number | null;
   /** Minutes left until the nearest deadline (rounded down). */
   minutesLeft: number | null;
-  /** True when a deadline is < 60 minutes away — triggers the panic banner. */
+  /**
+   * True when the nearest deadline is inside the Super-Admin configured panic
+   * threshold (default 60 minutes) — triggers the crimson panic banner.
+   */
   panic: boolean;
   /** True when any deadline has fully passed without settle (read-only hint). */
   anyExpired: boolean;
@@ -27,6 +32,15 @@ export type DeadlineState = {
  * fallbacks so a missing table never breaks the nav.
  */
 export function useDeadlineBanner(): DeadlineState {
+  // The panic threshold is Super-Admin editable. `useAdminConfig` layers the
+  // hardcoded default under the server response, so this is always a sane
+  // positive number even while the config query is loading or was rejected.
+  const { marketRules } = useAdminConfig();
+  const panicMinutes =
+    Number.isFinite(marketRules.panicThresholdMinutes) && marketRules.panicThresholdMinutes > 0
+      ? marketRules.panicThresholdMinutes
+      : DEFAULT_MARKET_RULES.panicThresholdMinutes;
+
   const gwStatus = useQuery(api.gameweeks.getGameweekStatus) ?? {
     byStage: {} as Record<string, { deadlineAt: number | null; locked: boolean; settled: boolean }>,
     byGameweek: [] as Array<{
@@ -91,7 +105,10 @@ export function useDeadlineBanner(): DeadlineState {
 
   const minutesLeft =
     nearestDeadline !== null ? Math.max(0, Math.floor((nearestDeadline - now) / 60000)) : null;
-  const panic = !transfersClosed && nearestDeadline !== null && nearestDeadline - now < 60 * 60 * 1000;
+  const panic =
+    !transfersClosed &&
+    nearestDeadline !== null &&
+    nearestDeadline - now < panicMinutes * 60 * 1000;
 
   // One-shot browser notification at T-30 and T-10 (never double-fires).
   useEffect(() => {

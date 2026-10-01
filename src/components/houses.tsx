@@ -1,7 +1,6 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
-import { HOUSE_META } from "@/convex/configDefaults";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import type { House, Position } from "@/convex/schema";
 
@@ -13,6 +12,23 @@ import type { House, Position } from "@/convex/schema";
 export function useHouseName(): (house: House | string | null | undefined) => string {
   const { houseName } = useAdminConfig();
   return (house) => houseName(house);
+}
+
+/**
+ * The Super-Admin editable brand colour for a house. `useAdminConfig` layers
+ * the built-in palette under the server response, so this always resolves to
+ * a valid hex string — a missing or malformed config can never yield
+ * `undefined` and break an inline style.
+ */
+export function useHouseColor(): (house: House | string | null | undefined) => string {
+  const { houseBrand } = useAdminConfig();
+  return (house) => houseBrand(house).color;
+}
+
+/** The Super-Admin editable motto for a house (blank when unset). */
+export function useHouseMotto(): (house: House | string | null | undefined) => string {
+  const { houseBrand } = useAdminConfig();
+  return (house) => houseBrand(house).motto;
 }
 
 /** Resolve the house color (custom logos override the default palette). */
@@ -48,9 +64,11 @@ const RING_COLORS: Record<House, string> = {
 };
 
 export function HouseDot({ house, className }: { house: House; className?: string }) {
+  const color = useHouseColor();
   return (
     <span
       className={cn("inline-block size-2.5 rounded-full shrink-0", DOT_COLORS[house], className)}
+      style={{ backgroundColor: color(house) }}
       aria-hidden
     />
   );
@@ -67,6 +85,8 @@ export function HouseCrest({
 }) {
   const logos = useHouseLogos();
   const houseName = useHouseName();
+  const color = useHouseColor();
+  const brandColor = color(house);
   const label = houseName(house);
   const custom = logos[house];
   if (custom) {
@@ -92,8 +112,8 @@ export function HouseCrest({
         width: size,
         height: size,
         fontSize: size * 0.42,
-        color: HOUSE_META[house].color,
-        background: `${HOUSE_META[house].color}1a`,
+        color: brandColor,
+        background: `${brandColor}1a`,
       }}
       aria-label={`${label} crest`}
       title={label}
@@ -105,6 +125,7 @@ export function HouseCrest({
 
 export function HouseBadge({ house, className }: { house: House; className?: string }) {
   const houseName = useHouseName();
+  const color = useHouseColor();
   return (
     <span
       className={cn(
@@ -113,6 +134,9 @@ export function HouseBadge({ house, className }: { house: House; className?: str
         TEXT_COLORS[house],
         className,
       )}
+      // The configured brand colour wins over the built-in palette class so a
+      // rebrand takes effect everywhere a house badge appears.
+      style={{ color: color(house) }}
       title={houseName(house)}
     >
       <HouseDot house={house} />

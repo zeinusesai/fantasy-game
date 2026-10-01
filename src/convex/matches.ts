@@ -9,7 +9,8 @@ import {
   STAGES,
 } from "./schema";
 import type { Position } from "./schema";
-import { computePlayerPoints } from "./points";
+import { computePlayerPoints, resolveScoringRules, captainMultiplier } from "./points";
+import { getSettingsRow, normalizeSettings } from "./adminConfig";
 import type { Id } from "./_generated/dataModel";
 
 // ── Public queries ───────────────────────────────────────────────────────
@@ -604,23 +605,29 @@ export const saveMatch = mutation({
       });
     }
 
-    // Per-player stat lines with computed fantasy points.
+    // Per-player stat lines with computed fantasy points. Scored against the
+    // Super-Admin's configured matrix (falls back to built-in defaults).
+    const settings = normalizeSettings(await getSettingsRow(ctx));
+    const rules = resolveScoringRules(settings.scoringRules);
     for (const line of args.lines) {
       const player = playerDocs.find((p) => p && p._id === line.playerId);
       if (!player) continue;
       const potm = args.potmPlayerId === line.playerId;
-      const fantasyPoints = computePlayerPoints({
-        position: player.position,
-        rating: line.rating,
-        goals: line.goals,
-        assists: line.assists,
-        yellowCards: line.yellowCards,
-        redCards: line.redCards,
-        ownGoals: line.ownGoals,
-        saves: line.saves,
-        cleanSheet: line.cleanSheet,
-        potm,
-      });
+      const fantasyPoints = computePlayerPoints(
+        {
+          position: player.position,
+          rating: line.rating,
+          goals: line.goals,
+          assists: line.assists,
+          yellowCards: line.yellowCards,
+          redCards: line.redCards,
+          ownGoals: line.ownGoals,
+          saves: line.saves,
+          cleanSheet: line.cleanSheet,
+          potm,
+        },
+        rules,
+      );
       await ctx.db.insert("matchPlayers", {
         matchId,
         playerId: line.playerId,
@@ -778,8 +785,14 @@ async function recalculateMatchPoints(
 
   // Compute per-player points via the shared scoring rules.
   const pointsByPlayer = new Map<string, number>();
+  // Resolve the Super-Admin scoring matrix ONCE for this recalculation so
+  // every player in the match is scored against identical rules, and a
+  // missing/corrupt config row falls back to the built-in defaults.
+  const settings = normalizeSettings(await getSettingsRow(ctx));
+  const rules = resolveScoringRules(settings.scoringRules);
+  const captainMult = captainMultiplier(rules);
   for (const [pid, stats] of agg) {
-    pointsByPlayer.set(pid, computePlayerPoints(stats));
+    pointsByPlayer.set(pid, computePlayerPoints(stats, rules));
   }
 
   // Rewrite the matchScores table (idempotent full refresh).
@@ -796,7 +809,7 @@ async function recalculateMatchPoints(
       const p = pointsByPlayer.get(String(pid));
       if (p === undefined) continue;
       pts += p;
-      if (squad.captainId === pid) pts += p; // captain 2x
+      if (squad.captainId === pid) pts += p * (captainMult - 1); // captain bonus
     }
     await ctx.db.insert("matchScores", {
       matchId,

@@ -6,6 +6,7 @@ import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import { OwnershipWatermark } from "@/components/OwnershipWatermark";
 import { MaintenanceGate } from "@/components/MaintenanceGate";
+import { AppTitleSync } from "@/components/AppTitleSync";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
@@ -149,6 +150,7 @@ createRoot(document.getElementById("root")!).render(
           <MaintenanceGate>
             <RouteSyncer />
           <AdminSeedTrigger />
+          <AppTitleSync />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Landing />} />

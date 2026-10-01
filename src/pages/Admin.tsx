@@ -131,6 +131,7 @@ import {
   Pencil,
   Plus,
   Save,
+  ScrollText,
   Shield,
   SlidersHorizontal,
   Trash2,
@@ -145,6 +146,10 @@ import { PageLoading } from "@/components/PageLoading";
 import { MatchControlCenter } from "@/components/MatchControlCenter";
 import { GameweeksTab } from "@/components/GameweeksTab";
 import { CustomizationTab } from "@/components/CustomizationTab";
+import { useAdminConfig } from "@/hooks/use-admin-config";
+import { AuditLogTab } from "@/components/AuditLogTab";
+import { UserInspectorTab } from "@/components/UserInspectorTab";
+import { BulkOpsTab } from "@/components/BulkOpsTab";
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
@@ -258,7 +263,23 @@ export default function Admin() {
               </TabsTrigger>
             )}
             {isSuper && <TabsTrigger value="users">Users</TabsTrigger>}
+            {isSuper && (
+              <TabsTrigger value="inspector" className="gap-1.5">
+                <UserCog className="size-3.5" /> Inspector
+              </TabsTrigger>
+            )}
+            {isSuper && (
+              <TabsTrigger value="bulk" className="gap-1.5">
+                <Wrench className="size-3.5" /> Bulk Ops
+              </TabsTrigger>
+            )}
+            {isSuper && (
+              <TabsTrigger value="audit" className="gap-1.5">
+                <ScrollText className="size-3.5" /> Audit
+              </TabsTrigger>
+            )}
             {isSuper && <TabsTrigger value="settings">Settings</TabsTrigger>}
+            {isSuper && <TabsTrigger value="maintenance">Maintenance</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="players" className="mt-4">
@@ -292,11 +313,23 @@ export default function Admin() {
               <TabsContent value="users" className="mt-4">
                 <UsersTab />
               </TabsContent>
+              <TabsContent value="inspector" className="mt-4">
+                <UserInspectorTab />
+              </TabsContent>
+              <TabsContent value="bulk" className="mt-4">
+                <BulkOpsTab />
+              </TabsContent>
+              <TabsContent value="audit" className="mt-4">
+                <AuditLogTab />
+              </TabsContent>
               <TabsContent value="settings" className="mt-4">
                 <SettingsTab onOpenMaintenance={() => setTab("maintenance")} />
               </TabsContent>
               <TabsContent value="maintenance" className="mt-4">
-                <MaintenanceCard />
+                <div className="space-y-6">
+                  <MaintenanceCard />
+                  <MaintenanceCopyEditor />
+                </div>
               </TabsContent>
             </>
           )}
@@ -2057,6 +2090,119 @@ function RolesTab() {
 }
 
 // ── Maintenance mode controls (super admin only) ─────────────────────
+
+/**
+ * Live editing of the maintenance screen copy + the Instagram contact link,
+ * so the lock screen can be rewritten without a code change. Mirrors the UI
+ * text editor in the Customize tab but sits next to the toggle itself, which
+ * is where it is actually needed while the platform is down.
+ */
+function MaintenanceCopyEditor() {
+  const { uiText, instagramUrl, loading } = useAdminConfig();
+  const setUiText = useMutation(api.adminConfig.setUiText);
+  const [draft, setDraft] = useState<Record<string, string> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const value = (key: string) =>
+    draft?.[key] ?? (uiText as unknown as Record<string, string>)[key] ?? "";
+
+  const save = async () => {
+    const title = value("maintenanceTitle").trim();
+    const message = value("maintenanceMessage").trim();
+    const handle = value("instagramHandle").trim().replace(/^@/, "");
+    if (title.length === 0 || title.length > 60) {
+      toast.error("The maintenance title must be 1-60 characters.");
+      return;
+    }
+    if (message.length === 0 || message.length > 400) {
+      toast.error("The maintenance message must be 1-400 characters.");
+      return;
+    }
+    if (handle.length > 0 && !/^[A-Za-z0-9._]{1,40}$/.test(handle)) {
+      toast.error("Instagram handles use letters, numbers, dots and underscores only.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await setUiText({
+        maintenanceTitle: title,
+        maintenanceMessage: message,
+        instagramHandle: handle,
+      });
+      toast.success("Maintenance screen copy saved.");
+      setDraft(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the maintenance copy.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="border-border/80">
+      <CardHeader>
+        <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+          <Megaphone className="text-primary size-4" /> Lock screen copy
+        </CardTitle>
+        <CardDescription>
+          Exactly what non-staff visitors see while maintenance mode is on. The button links to{" "}
+          <a
+            href={instagramUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            {uiText.instagramHandle}
+          </a>
+          .
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor="maint-title">Screen title</Label>
+          <Input
+            id="maint-title"
+            value={value("maintenanceTitle")}
+            onChange={(e) => setDraft((prev) => ({ ...(prev ?? {}), maintenanceTitle: e.target.value }))}
+            maxLength={60}
+            disabled={loading}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="maint-message">Status message</Label>
+          <Textarea
+            id="maint-message"
+            value={value("maintenanceMessage")}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...(prev ?? {}), maintenanceMessage: e.target.value }))
+            }
+            rows={3}
+            maxLength={400}
+            disabled={loading}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="maint-instagram">Instagram handle</Label>
+          <Input
+            id="maint-instagram"
+            value={value("instagramHandle")}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...(prev ?? {}), instagramHandle: e.target.value }))
+            }
+            placeholder="zein.e9"
+            maxLength={40}
+            disabled={loading}
+          />
+          <p className="text-muted-foreground text-xs">No @ — it is added for you.</p>
+        </div>
+        <Button onClick={save} disabled={busy || loading}>
+          {busy ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Save className="mr-1.5 size-4" />}
+          Save lock screen copy
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
 
 function MaintenanceCard() {
   const statusResult = useQuery(api.system.getMaintenanceStatus);

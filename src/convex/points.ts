@@ -1,21 +1,60 @@
-// Fantasy scoring rules — single source of truth, used by the backend on
-// match save and by the UI to explain where points come from.
-import type { Position } from "./schema";
+// ── Fantasy scoring engine (Super-Admin configurable) ────────────────────
+//
+// The rules below are only the DEFAULTS. At runtime the Super Admin can
+// retune every number from the Customization tab, and that configured matrix
+// is what actually scores a match.
+//
+// The contract:
+//   • `DEFAULT_SCORING_RULES` is the fallback for every field.
+//   • `resolveScoringRules(partial)` takes ANY input — including null, a
+//     string, or a matrix full of NaN — and returns a complete, in-range,
+//     finite rules object. It is total: it cannot throw.
+//   • `computePlayerPoints(stats, rules?)` defaults to the built-ins, so every
+//     existing call site keeps working unchanged.
 
-export const SCORING_RULES = {
-  goalByPosition: { GK: 6, DEF: 6, MID: 5, FWD: 5 },
-  assist: 3,
-  cleanSheetGkDef: 4,
-  savesPerPoint: 2, // every 2 saves = 1 pt
-  yellowCard: -1,
-  redCard: -3,
-  ownGoal: -2,
-  potmBonus: 3,
-  ratingBonus8Threshold: 8.0,
-  ratingBonus8Points: 2, // rating >= 8.0 earns +2
-  ratingBonus9Threshold: 9.0,
-  ratingBonus9Points: 3, // rating >= 9.0 earns +3 (instead of +2)
-} as const;
+import type { Position } from "./schema";
+import {
+  DEFAULT_SCORING_RULES,
+  clampInt,
+  clampNum,
+  goalPointsFor,
+  type ScoringRules,
+} from "./defaults";
+
+export type { ScoringRules };
+
+/** The immutable built-in matrix (used when nothing is configured). */
+export const SCORING_RULES: ScoringRules = { ...DEFAULT_SCORING_RULES };
+
+/**
+ * Coerce any partial/untrusted rules object into a complete ScoringRules.
+ * Total function — never throws, always finite, always in range.
+ */
+export function resolveScoringRules(partial: unknown): ScoringRules {
+  const raw =
+    partial && typeof partial === "object" && !Array.isArray(partial)
+      ? (partial as Record<string, unknown>)
+      : {};
+  return {
+    goalGk: clampInt(raw.goalGk, 0, 100, DEFAULT_SCORING_RULES.goalGk),
+    goalDef: clampInt(raw.goalDef, 0, 100, DEFAULT_SCORING_RULES.goalDef),
+    goalMid: clampInt(raw.goalMid, 0, 100, DEFAULT_SCORING_RULES.goalMid),
+    goalFwd: clampInt(raw.goalFwd, 0, 100, DEFAULT_SCORING_RULES.goalFwd),
+    assist: clampInt(raw.assist, 0, 100, DEFAULT_SCORING_RULES.assist),
+    cleanSheetGkDef: clampInt(raw.cleanSheetGkDef, 0, 100, DEFAULT_SCORING_RULES.cleanSheetGkDef),
+    // A savesPerPoint of 0 would be a divide-by-zero at scoring time.
+    savesPerPoint: clampInt(raw.savesPerPoint, 1, 50, DEFAULT_SCORING_RULES.savesPerPoint),
+    yellowCard: clampInt(raw.yellowCard, -100, 0, DEFAULT_SCORING_RULES.yellowCard),
+    redCard: clampInt(raw.redCard, -100, 0, DEFAULT_SCORING_RULES.redCard),
+    ownGoal: clampInt(raw.ownGoal, -100, 0, DEFAULT_SCORING_RULES.ownGoal),
+    potmBonus: clampInt(raw.potmBonus, 0, 100, DEFAULT_SCORING_RULES.potmBonus),
+    ratingBonus8Threshold: clampNum(raw.ratingBonus8Threshold, 0, 10, DEFAULT_SCORING_RULES.ratingBonus8Threshold),
+    ratingBonus8Points: clampInt(raw.ratingBonus8Points, 0, 100, DEFAULT_SCORING_RULES.ratingBonus8Points),
+    ratingBonus9Threshold: clampNum(raw.ratingBonus9Threshold, 0, 10, DEFAULT_SCORING_RULES.ratingBonus9Threshold),
+    ratingBonus9Points: clampInt(raw.ratingBonus9Points, 0, 100, DEFAULT_SCORING_RULES.ratingBonus9Points),
+    captainMultiplier: clampNum(raw.captainMultiplier, 1, 5, DEFAULT_SCORING_RULES.captainMultiplier),
+  };
+}
 
 export type MatchPlayerStats = {
   position: Position;
@@ -30,31 +69,56 @@ export type MatchPlayerStats = {
   potm: boolean;
 };
 
-/** Compute the fantasy points for one player's stat line in one match. */
-export function computePlayerPoints(stats: MatchPlayerStats): number {
+/** Coerce a stat count to a finite integer — never NaN-poisons a total. */
+function stat(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n === 0) return 0;
+  return n;
+}
+
+/**
+ * Compute one player's fantasy points under the supplied rules.
+ * `rules` is optional — omitting it uses the built-in defaults, so every
+ * existing call site continues to compile and behave identically.
+ */
+export function computePlayerPoints(
+  stats: MatchPlayerStats,
+  rules: ScoringRules = SCORING_RULES,
+): number {
+  // The rules object may itself be untrusted when passed straight from a
+  // config row, so normalise before any arithmetic.
+  const R = resolveScoringRules(rules);
+  const position: Position = (() => {
+    const p = stats?.position;
+    return p === "GK" || p === "DEF" || p === "MID" || p === "FWD" ? p : "MID";
+  })();
+
   let pts = 0;
-  pts += stats.goals * SCORING_RULES.goalByPosition[stats.position];
-  pts += stats.assists * SCORING_RULES.assist;
-  if (stats.cleanSheet && (stats.position === "GK" || stats.position === "DEF")) {
-    pts += SCORING_RULES.cleanSheetGkDef;
+  pts += stat(stats?.goals) * goalPointsFor(R, position);
+  pts += stat(stats?.assists) * R.assist;
+  if (stats?.cleanSheet === true && (position === "GK" || position === "DEF")) {
+    pts += R.cleanSheetGkDef;
   }
-  pts += Math.floor(stats.saves / SCORING_RULES.savesPerPoint);
-  pts += stats.yellowCards * SCORING_RULES.yellowCard;
-  pts += stats.redCards * SCORING_RULES.redCard;
-  pts += stats.ownGoals * SCORING_RULES.ownGoal;
-  if (stats.potm) pts += SCORING_RULES.potmBonus;
-  if (
-    stats.rating !== undefined &&
-    stats.rating !== null &&
-    stats.rating >= SCORING_RULES.ratingBonus9Threshold
-  ) {
-    pts += SCORING_RULES.ratingBonus9Points;
-  } else if (
-    stats.rating !== undefined &&
-    stats.rating !== null &&
-    stats.rating >= SCORING_RULES.ratingBonus8Threshold
-  ) {
-    pts += SCORING_RULES.ratingBonus8Points;
+  pts += Math.floor(Math.max(stat(stats?.saves), 0) / R.savesPerPoint);
+  pts += stat(stats?.yellowCards) * R.yellowCard;
+  pts += stat(stats?.redCards) * R.redCard;
+  pts += stat(stats?.ownGoals) * R.ownGoal;
+  if (stats?.potm === true) pts += R.potmBonus;
+
+  const rating = stat(stats?.rating);
+  if (rating > 0) {
+    // 9-tier is checked first so an admin setting both tiers still gets the
+    // higher bonus — matching the historical behaviour.
+    if (rating >= R.ratingBonus9Threshold) {
+      pts += R.ratingBonus9Points;
+    } else if (rating >= R.ratingBonus8Threshold) {
+      pts += R.ratingBonus8Points;
+    }
   }
   return pts;
+}
+
+/** Captain multiplier for the given rules (2× by default, admin-tunable). */
+export function captainMultiplier(rules: ScoringRules = SCORING_RULES): number {
+  return resolveScoringRules(rules).captainMultiplier;
 }

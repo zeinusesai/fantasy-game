@@ -1,6 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireAdmin, requireSuperAdmin } from "./lib";
+import { getSettingsRow, normalizeSettings } from "./adminConfig";
+import { formatMoney } from "./configDefaults";
+import { internal } from "./_generated/api";
 import {
   houseValidator,
   positionValidator,
@@ -91,15 +94,33 @@ export const addPlayer = mutation({
     if (!Number.isFinite(price) || price < 0) {
       throw new Error("Invalid price format or missing field — use a non-negative number.");
     }
+    // Enforce the Super-Admin price window (defaults $4m–$22m).
+    const { marketRules } = normalizeSettings(await getSettingsRow(ctx));
+    if (price < marketRules.minPlayerPrice || price > marketRules.maxPlayerPrice) {
+      throw new Error(
+        `Price must be between ${formatMoney(marketRules.minPlayerPrice)} and ${formatMoney(marketRules.maxPlayerPrice)}.`,
+      );
+    }
 
     try {
-      return await ctx.db.insert("players", {
+      const id = await ctx.db.insert("players", {
         name,
         house: house as House,
         position: position as Position,
         price: Math.round(price),
         active: true,
       });
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "add_player",
+          category: "config",
+          target: name,
+          detail: `${house} ${position} · ${formatMoney(price)}`,
+        });
+      } catch {
+        // audit is non-fatal
+      }
+      return id;
     } catch {
       throw new Error(
         "Could not add player — invalid price format or missing field. Please check the form and try again.",
@@ -140,6 +161,13 @@ export const updatePlayer = mutation({
     if (!Number.isFinite(price) || price < 0) {
       throw new Error("Invalid price format or missing field — use a non-negative number.");
     }
+    // Enforce the Super-Admin price window (defaults $4m–$22m).
+    const { marketRules } = normalizeSettings(await getSettingsRow(ctx));
+    if (price < marketRules.minPlayerPrice || price > marketRules.maxPlayerPrice) {
+      throw new Error(
+        `Price must be between ${formatMoney(marketRules.minPlayerPrice)} and ${formatMoney(marketRules.maxPlayerPrice)}.`,
+      );
+    }
 
     try {
       await ctx.db.patch(args.playerId, {
@@ -148,6 +176,16 @@ export const updatePlayer = mutation({
         position: position as Position,
         price: Math.round(price),
       });
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "update_player",
+          category: "config",
+          target: name,
+          detail: `${house} ${position} · ${formatMoney(price)}`,
+        });
+      } catch {
+        // audit is non-fatal
+      }
     } catch {
       throw new Error(
         "Could not update player — invalid price format or missing field. Please check the form and try again.",

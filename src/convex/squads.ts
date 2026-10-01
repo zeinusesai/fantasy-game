@@ -305,11 +305,25 @@ export const saveSquad = mutation({
       // platform budget, so an override can only ever LOWER it — and
       // safeBudget re-asserts that the result is finite and non-negative.
       const settings = normalizeSettings(await getSettingsRow(ctx));
-      const myBudget = safeBudget(resolveManagerBudget(settings, String(user._id)));
+      const myBudget = safeBudget(
+        resolveManagerBudget(settings, String(user._id)),
+        settings.marketRules.defaultBudget,
+      );
       if (totalSpent > myBudget) {
         throw new Error(
           `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(myBudget)}.`,
         );
+      }
+      // Price window guard — a player repriced above the cap after the squad
+      // was built would otherwise make an existing squad unsavable.
+      const { minPlayerPrice, maxPlayerPrice } = settings.marketRules;
+      for (const p of players) {
+        const price = toSafeAmount(p?.price);
+        if (price < minPlayerPrice || price > maxPlayerPrice) {
+          throw new Error(
+            `${p?.name ?? "A player"} is priced outside the current market range (${formatMoney(minPlayerPrice)}–${formatMoney(maxPlayerPrice)}).`,
+          );
+        }
       }
     } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
@@ -324,6 +338,12 @@ export const saveSquad = mutation({
       // field a team.
       const change = existing.playerIds.map(String).join(",") !== playerIds.map(String).join(",");
       if (change) {
+        // Master switch: the Super Admin can lock the Squad Builder for
+        // everyone, independent of any gameweek deadline.
+        const settingsForLock = normalizeSettings(await getSettingsRow(ctx));
+        if (settingsForLock.editableSquads === false) {
+          throw new Error("The Super Admin has locked the squad builder platform-wide.");
+        }
         const gwRows = await ctx.db.query("gameweeks").collect();
         const byStage: Record<
           string,

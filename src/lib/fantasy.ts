@@ -1,5 +1,5 @@
 import { HOUSES, type House, type Position, type Stage } from "@/convex/schema";
-import { SCORING_RULES } from "@/convex/points";
+import { SCORING_RULES, type ScoringRules } from "@/convex/points";
 
 export { HOUSES };
 export type { House, Position, Stage };
@@ -35,27 +35,38 @@ export const STAGE_LABELS: Record<Stage, string> = {
 
 export const STAGE_ORDER: Stage[] = ["semifinal1", "semifinal2", "third_place", "final"];
 
-export const SCORING_RULE_LINES: { label: string; points: string }[] = [
-  { label: "Goal — GK / DEF", points: `+${SCORING_RULES.goalByPosition.GK}` },
-  { label: "Goal — MID", points: `+${SCORING_RULES.goalByPosition.MID}` },
-  { label: "Goal — FWD", points: `+${SCORING_RULES.goalByPosition.FWD}` },
-  { label: "Assist", points: `+${SCORING_RULES.assist}` },
-  { label: "Clean sheet — GK / DEF", points: `+${SCORING_RULES.cleanSheetGkDef}` },
-  { label: `Every ${SCORING_RULES.savesPerPoint} saves`, points: "+1" },
-  { label: "Yellow card", points: String(SCORING_RULES.yellowCard) },
-  { label: "Red card", points: String(SCORING_RULES.redCard) },
-  { label: "Own goal", points: String(SCORING_RULES.ownGoal) },
-  { label: "Player of the Match", points: `+${SCORING_RULES.potmBonus}` },
-  {
-    label: `Match rating ≥ ${SCORING_RULES.ratingBonus9Threshold.toFixed(1)}`,
-    points: `+${SCORING_RULES.ratingBonus9Points}`,
-  },
-  {
-    label: `Match rating ≥ ${SCORING_RULES.ratingBonus8Threshold.toFixed(1)}`,
-    points: `+${SCORING_RULES.ratingBonus8Points}`,
-  },
-  { label: "Captain", points: "×2" },
-];
+/**
+ * Human-readable explanation of the scoring matrix.
+ *
+ * This is a FUNCTION, not a constant: the Super Admin can retune every value
+ * from the Customization tab, so the rules shown to managers must be built
+ * from the live config. Passing no argument uses the built-in defaults.
+ */
+export function scoringRuleLines(
+  rules: ScoringRules = SCORING_RULES,
+): { label: string; points: string }[] {
+  return [
+    { label: "Goal — GK / DEF", points: `+${rules.goalGk} / +${rules.goalDef}` },
+    { label: "Goal — MID", points: `+${rules.goalMid}` },
+    { label: "Goal — FWD", points: `+${rules.goalFwd}` },
+    { label: "Assist", points: `+${rules.assist}` },
+    { label: "Clean sheet — GK / DEF", points: `+${rules.cleanSheetGkDef}` },
+    { label: `Every ${rules.savesPerPoint} saves`, points: "+1" },
+    { label: "Yellow card", points: String(rules.yellowCard) },
+    { label: "Red card", points: String(rules.redCard) },
+    { label: "Own goal", points: String(rules.ownGoal) },
+    { label: "Player of the Match", points: `+${rules.potmBonus}` },
+    {
+      label: `Match rating ≥ ${rules.ratingBonus9Threshold.toFixed(1)}`,
+      points: `+${rules.ratingBonus9Points}`,
+    },
+    {
+      label: `Match rating ≥ ${rules.ratingBonus8Threshold.toFixed(1)}`,
+      points: `+${rules.ratingBonus8Points}`,
+    },
+    { label: "Captain", points: `×${rules.captainMultiplier}` },
+  ];
+}
 
 /** Curated avatar presets: house crests, footballer badges, icons, mascots. */
 export type AvatarPreset = {
