@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
 import { avatarPresetUrl } from "@/lib/fantasy";
+import { UserBadges } from "@/components/UserBadge";
 import { cn } from "@/lib/utils";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -125,11 +126,24 @@ export function AppNav({ children }: { children: ReactNode }) {
                 <span className="hidden max-w-28 truncate text-sm font-medium sm:block">
                   {user?.teamName ?? user?.username}
                 </span>
+                {/* Role checkmark + custom badge (top navigation). */}
+                <UserBadges
+                  sizeClass="size-3.5"
+                  role={user?.role ?? null}
+                  customBadge={user?.customBadge ?? null}
+                />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="flex items-center justify-between">
-                <span>@{user?.username}</span>
+                <span className="flex items-center gap-1.5">
+                  @{user?.username}
+                  <UserBadges
+                    sizeClass="size-3.5"
+                    role={user?.role ?? null}
+                    customBadge={user?.customBadge ?? null}
+                  />
+                </span>
                 {role === "super_admin" && (
                   <Badge className="bg-primary text-primary-foreground gap-1">
                     <Crown className="size-3" /> Super Admin

@@ -41,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
+import { UserBadges, BADGE_META, ASSIGNABLE_BADGE_KEYS } from "@/components/UserBadge";
 import { HOUSES, POSITION_LABELS, STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -1942,7 +1943,15 @@ function AnnouncementCard() {
 function RolesTab() {
   const usersResult = useQuery(api.usersAdmin.listAllUsersWithRoles);
   const updateUserRole = useMutation(api.usersAdmin.updateUserRole);
-  const users = usersResult ?? [];
+  const assignUserBadge = useMutation(api.usersAdmin.assignUserBadge);
+  const users = (usersResult ?? []) as Array<{
+    _id: Id<"users">;
+    username: string | null;
+    teamName: string | null;
+    image: string | null;
+    role: string;
+    customBadge: string | null;
+  }>;
   const loading = usersResult === undefined;
   const [busyId, setBusyId] = useState<Id<"users"> | null>(null);
 
@@ -1953,6 +1962,24 @@ function RolesTab() {
       toast.success(`Role updated to ${newRole}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not update the role.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Super Admin badge assignment — try/catch with clean toasts; "none"
+  // clears the badge server-side.
+  const changeBadge = async (targetUserId: Id<"users">, username: string | null, badgeType: string) => {
+    setBusyId(targetUserId);
+    try {
+      await assignUserBadge({ targetUserId, badgeType });
+      toast.success(
+        badgeType === "none"
+          ? `Badge removed from @${username ?? "user"}.`
+          : `"${badgeType}" badge assigned to @${username ?? "user"}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not assign the badge.");
     } finally {
       setBusyId(null);
     }
@@ -1996,6 +2023,12 @@ function RolesTab() {
                     <span className="flex items-center gap-2">
                       <AdminAvatar username={u.username} image={u.image} />
                       <span className="font-semibold">@{u.username ?? "—"}</span>
+                      {/* Current role checkmark + custom badge preview. */}
+                      <UserBadges
+                        sizeClass="size-3.5"
+                        role={u.role}
+                        customBadge={u.customBadge}
+                      />
                     </span>
                   </TableCell>
                   <TableCell>{u.teamName ?? "—"}</TableCell>
@@ -2013,20 +2046,43 @@ function RolesTab() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Select
-                      value={u.role ?? "user"}
-                      onValueChange={(v) => changeRole(u._id, v)}
-                      disabled={busyId === u._id}
-                    >
-                      <SelectTrigger className="ml-auto h-8 w-36">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="super_admin">Super Admin</SelectItem>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="user">User</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center justify-end gap-2">
+                      {/* Assign badge — Super Admin only, validated server-side. */}
+                      <Select
+                        value={u.customBadge ?? "none"}
+                        onValueChange={(v) => changeBadge(u._id, u.username, v)}
+                        disabled={busyId === u._id}
+                      >
+                        <SelectTrigger className="h-8 w-[132px]" title="Assign badge">
+                          <SelectValue placeholder="Badge" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">✕ No badge</SelectItem>
+                          {ASSIGNABLE_BADGE_KEYS.map((key) => {
+                            const meta = BADGE_META[key];
+                            return (
+                              <SelectItem key={key} value={key}>
+                                {meta.glyph} {meta.label}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={u.role ?? "user"}
+                        onValueChange={(v) => changeRole(u._id, v)}
+                        disabled={busyId === u._id}
+                      >
+                        <SelectTrigger className="h-8 w-36">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="super_admin">Super Admin</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
+                          <SelectItem value="user">User</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

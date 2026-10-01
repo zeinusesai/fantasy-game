@@ -68,6 +68,7 @@ export const listUsers = query({
         role: u.role ?? null,
         budget: u.budget ?? null,
         customBudget: u.customBudget ?? null,
+        customBadge: u.customBadge ?? null,
       }));
     } catch {
       // Never bubble storage errors into a rejected query.
@@ -98,6 +99,7 @@ export const listAllUsersWithRoles = query({
           teamName: u.teamName ?? null,
           image: u.image ?? null,
           role: normalizeRole(u.role),
+          customBadge: u.customBadge ?? null,
         }))
         .sort((a, b) => (a.username ?? "").localeCompare(b.username ?? ""));
     } catch {
@@ -173,6 +175,57 @@ export const updateUserRole = mutation({
         throw err; // rethrow clean validation messages untouched
       }
       throw new Error("Could not update the user's role — please try again.");
+    }
+  },
+});
+
+/**
+ * Super Admin only: assign or clear a custom badge on any manager. Badge
+ * keys are strictly validated against the known set; "none" clears the
+ * badge (field removed server-side). Invalid keys throw a clean error.
+ */
+export const assignUserBadge = mutation({
+  args: { targetUserId: v.id("users"), badgeType: v.string() },
+  handler: async (ctx, { targetUserId, badgeType }) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Only the Super Admin can assign badges.",
+      );
+    }
+
+    const key = typeof badgeType === "string" ? badgeType.trim().toLowerCase() : "";
+    const VALID_BADGES = [
+      "none",
+      "star",
+      "gold_checkmark",
+      "fire",
+      "crown",
+      "shield",
+      "diamond",
+    ] as const;
+    type BadgeKey = (typeof VALID_BADGES)[number];
+    if (!(VALID_BADGES as readonly string[]).includes(key)) {
+      throw new Error(`Unknown badge "${key}".`);
+    }
+
+    try {
+      const target = await ctx.db.get(targetUserId);
+      if (!target) throw new Error("User not found — they may already be deleted.");
+
+      if (key === "none") {
+        // Clearing: patching with undefined removes the field.
+        await ctx.db.patch(targetUserId, { customBadge: undefined });
+        return { badge: null };
+      }
+      await ctx.db.patch(targetUserId, { customBadge: key as BadgeKey });
+      return { badge: key };
+      } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not assign the badge — please try again.");
     }
   },
 });

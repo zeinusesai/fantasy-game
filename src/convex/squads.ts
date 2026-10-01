@@ -170,9 +170,53 @@ export const getSquadByUserId = query({
         lastMatchPoints: mine?.lastMatch ?? 0,
         rank,
         managerCount: rows.length,
+        customBadge: user.customBadge ?? null,
+        role: user.role ?? null,
       };
     } catch {
       return null;
+    }
+  },
+});
+
+/**
+ * Managers who currently have a given player in their starting 7.
+ * Returns a plain array of public user info — `[]` when nobody has picked
+ * the player (or anything at all goes wrong), so the client renders a clean
+ * empty state instead of a rejected query.
+ */
+export const getManagersWhoPickedPlayer = query({
+  args: { playerId: v.id("players") },
+  handler: async (ctx, { playerId }) => {
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      const out: Array<{
+        userId: Id<"users">;
+        username: string;
+        teamName: string;
+        profilePic: string | null;
+        customBadge: string | null;
+        role: string | null;
+      }> = [];
+      for (const squad of squads) {
+        const ids = squad.playerIds ?? [];
+        if (!ids.some((id) => String(id) === String(playerId))) continue;
+        const user = await ctx.db.get(squad.userId);
+        // Deleted user with an orphaned squad row — skip, never crash.
+        if (!user) continue;
+        out.push({
+          userId: user._id,
+          username: user.username ?? "unknown",
+          teamName: user.teamName ?? "Unnamed team",
+          profilePic: user.image ?? null,
+          customBadge: user.customBadge ?? null,
+          role: user.role ?? null,
+        });
+      }
+      return out;
+    } catch {
+      // Storage hiccup / empty DB — degrade to an empty list.
+      return [];
     }
   },
 });

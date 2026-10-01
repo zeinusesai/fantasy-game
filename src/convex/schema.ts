@@ -81,6 +81,7 @@ const schema = defineSchema(
       profilePic: v.optional(v.string()), // optional profile photo (alias of image)
       budget: v.optional(v.number()), // remaining budget in $ (millions as plain numbers)
       customBudget: v.optional(v.number()), // super-admin budget override for this manager
+      customBadge: v.optional(v.string()), // custom badge: star | gold_checkmark | fire | crown | shield | diamond | none
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
     })
       .index("email", ["email"]) // index for the email. do not remove or modify

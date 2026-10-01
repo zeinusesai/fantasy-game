@@ -219,6 +219,8 @@ export const getLeaderboard = query({
         teamName: user?.teamName ?? "Unnamed team",
         avatar: user?.image ?? null,
         favoritePlayerName,
+        customBadge: user?.customBadge ?? null,
+        role: user?.role ?? null,
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,
       });

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoney, safeBudget } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
+import { UserBadges } from "@/components/UserBadge";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import {
   Select,
@@ -128,7 +129,15 @@ export default function Profile() {
                 </AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-semibold">@{user?.username}</p>
+                <p className="flex items-center gap-1.5 font-semibold">
+                  <span className="truncate">@{user?.username}</span>
+                  {/* Role checkmark + custom badge (profile header). */}
+                  <UserBadges
+                    sizeClass="size-4"
+                    role={user?.role ?? null}
+                    customBadge={user?.customBadge ?? null}
+                  />
+                </p>
                 <p className="text-muted-foreground text-sm">
                   {user?.role === "super_admin"
                     ? "Super Admin"

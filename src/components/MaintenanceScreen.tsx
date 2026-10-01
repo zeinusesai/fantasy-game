@@ -3,7 +3,7 @@ import { useConvex } from "convex/react";
 import { useNavigate } from "react-router";
 import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import { Loader2, Lock, RefreshCw, Settings, Wrench } from "lucide-react";
+import { ExternalLink, Instagram, Loader2, Lock, RefreshCw, Settings, Wrench } from "lucide-react";
 import { OwnershipWatermark } from "@/components/OwnershipWatermark";
 
 /**
@@ -51,6 +51,20 @@ export function MaintenanceScreen() {
             <span className="text-primary font-semibold">Zein</span>. It will
             probably be up in a few minutes!
           </p>
+          {/* Direct Instagram contact — plain anchor (no router involvement,
+              so it can never interfere with the status-check query or any
+              client-side navigation). rel is defense-in-depth on top of
+              target="_blank"; a malformed URL can't happen (hardcoded). */}
+          <a
+            href="https://www.instagram.com/zein.e9"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#f58529] via-[#dd2a7b] to-[#8134af] px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-pink-900/30 transition-all hover:scale-[1.03] hover:shadow-pink-700/40 focus-visible:ring-2 focus-visible:ring-pink-400 focus-visible:outline-none"
+          >
+            <Instagram className="size-4" />
+            Contact Zein on Instagram
+            <ExternalLink className="size-3.5 opacity-70 transition-opacity group-hover:opacity-100" />
+          </a>
         </div>
 
         <div className="flex flex-col items-center gap-2">

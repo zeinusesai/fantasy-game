@@ -28,7 +28,8 @@ import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { toast } from "sonner";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
-import { AlertTriangle, Check, Coins, Info, Loader2, RotateCcw, Users } from "lucide-react";
+import { PickedByDialog } from "@/components/PickedByDialog";
+import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -132,6 +133,9 @@ export default function SquadBuilder() {
 
   // ── Player details modal state ──
   const [detailFor, setDetailFor] = useState<PlayerRow | null>(null);
+
+  // ── Manager pick inspection ("Picked by …") state ──
+  const [pickedByFor, setPickedByFor] = useState<PlayerRow | null>(null);
 
   const parsedReqPrice = parseMoneyInput(reqPrice);
   const reqValid =
@@ -540,10 +544,21 @@ export default function SquadBuilder() {
                               <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
                                 {p.house} <PositionChip position={p.position} />
                               </p>
-                              {/* Ownership: exact pick count + % — safe at 0 squads. */}
-                              <p className="text-muted-foreground/80 mt-1 text-[11px]">
+                              {/* Ownership: exact pick count + % — safe at 0 squads.
+                                  The count is a button: opens the pick-inspection
+                                  dialog listing every manager who owns the player. */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation(); // don't toggle the player
+                                  setPickedByFor(p);
+                                }}
+                                title="View managers who picked this player"
+                                className="mt-1 inline-flex items-center gap-1 rounded text-[11px] font-medium text-sky-300 underline-offset-2 transition-colors hover:text-sky-200 hover:underline"
+                              >
                                 Picked by {ownership.count} manager{ownership.count === 1 ? "" : "s"} ({ownership.pct}%)
-                              </p>
+                                <Eye className="size-3" />
+                              </button>
                               {pendingReq && (
                                 <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
                                   <Coins className="size-3" /> price review pending
@@ -670,6 +685,15 @@ export default function SquadBuilder() {
         </DialogContent>
       </Dialog>
 
+      {/* Manager pick inspection — who owns this player? */}
+      <PickedByDialog
+        player={pickedByFor ? { _id: pickedByFor._id, name: pickedByFor.name } : null}
+        open={pickedByFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setPickedByFor(null);
+        }}
+      />
+
       {/* Player details modal — ownership, price, photo, quick pick/remove */}
       <Dialog
         open={detailFor !== null}
@@ -701,12 +725,20 @@ export default function SquadBuilder() {
             return (
               <div className="space-y-3">
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl border border-border/70 bg-secondary/40 p-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickedByFor(detailFor);
+                      setDetailFor(null);
+                    }}
+                    className="rounded-xl border border-border/70 bg-secondary/40 p-2.5 transition-colors hover:border-primary/40"
+                    title="View managers who picked this player"
+                  >
                     <p className="font-score text-xl font-bold">{ownership.count}</p>
                     <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
                       managers picked
                     </p>
-                  </div>
+                  </button>
                   <div className="rounded-xl border border-border/70 bg-secondary/40 p-2.5">
                     <p className="font-score text-xl font-bold">{ownership.pct}%</p>
                     <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">

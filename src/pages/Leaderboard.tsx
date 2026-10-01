@@ -3,6 +3,7 @@ import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { PitchView, type PitchPlayer } from "@/components/PitchView";
+import { PickedByDialog } from "@/components/PickedByDialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
+import { UserBadges } from "@/components/UserBadge";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -143,7 +145,15 @@ export default function Leaderboard() {
                             title={`Inspect ${row.teamName}'s squad`}
                             className="group flex flex-wrap items-center gap-1.5 text-left font-semibold transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none"
                           >
-                            {row.teamName}
+                            <span className="flex items-center gap-1.5">
+                              {row.teamName}
+                              {/* Role checkmark + custom badge — fail-safe. */}
+                              <UserBadges
+                                sizeClass="size-3.5"
+                                role={row.role}
+                                customBadge={row.customBadge}
+                              />
+                            </span>
                             <Eye className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
                             {row.rank === 1 && row.totalPoints > 0 && (
                               <Badge className="gap-1 whitespace-normal border border-amber-400/40 bg-amber-400/15 py-1 text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
@@ -153,7 +163,16 @@ export default function Leaderboard() {
                             )}
                           </button>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">@{row.username}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          <span className="flex items-center gap-1.5">
+                            @{row.username}
+                            <UserBadges
+                              sizeClass="size-3.5"
+                              role={row.role}
+                              customBadge={row.customBadge}
+                            />
+                          </span>
+                        </TableCell>
                         <TableCell>
                           {/* Strict fallback: unset favorite renders N/A, never blank/crash. */}
                           {row.favoritePlayerName ? (
@@ -252,6 +271,12 @@ function RivalInspector({
               </AvatarFallback>
             </Avatar>
             <span className="min-w-0 truncate">{rival?.teamName ?? "Rival squad"}</span>
+            {/* Role checkmark + custom badge in the inspector header. */}
+            <UserBadges
+              sizeClass="size-4"
+              role={rival?.role ?? null}
+              customBadge={rival?.customBadge ?? null}
+            />
           </SheetTitle>
           <SheetDescription>
             @{rival?.username ?? "unknown"}
@@ -322,6 +347,9 @@ function RivalInspector({
                 </p>
               </div>
 
+              {/* Who picked this rival's players — inspection list. */}
+              <RivalPickedByList rival={rival} />
+
               {/* Lineup on a visual pitch */}
               <div>
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
@@ -338,5 +366,61 @@ function RivalInspector({
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * "Picked by" inspection rows for a rival's squad — resolves each of their
+ * seven players to the managers owning it. Individual failures degrade to a
+ * dash; the section never blocks the rest of the drawer.
+ */
+function RivalPickedByList({
+  rival,
+}: {
+  rival: {
+    players: Array<{ _id: Id<"players">; name: string }>;
+  };
+}) {
+  const squadsResult = useQuery(api.squads.getPickCounts);
+  const allSquads = squadsResult;
+  const [openFor, setOpenFor] = useState<Id<"players"> | null>(null);
+
+  return (
+    <div>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        Picked by
+      </p>
+      <div className="space-y-1">
+        {rival.players.map((p) => {
+          const count = allSquads?.counts[String(p._id)] ?? 0;
+          return (
+            <button
+              key={String(p._id)}
+              onClick={() => setOpenFor(p._id)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-1.5 text-left transition-colors hover:bg-secondary/70"
+            >
+              <span className="truncate text-xs font-semibold">{p.name}</span>
+              <span className="text-muted-foreground shrink-0 text-[10px]">
+                {count > 0 ? `Picked by ${count} manager${count === 1 ? "" : "s"}` : "—"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <PickedByDialog
+        player={
+          openFor
+            ? {
+                _id: openFor,
+                name: rival.players.find((p) => String(p._id) === String(openFor))?.name ?? "Player",
+              }
+            : null
+        }
+        open={openFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setOpenFor(null);
+        }}
+      />
+    </div>
   );
 }
