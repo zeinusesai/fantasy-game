@@ -104,7 +104,7 @@ export default function Landing() {
                 <Users className="size-4 text-primary" /> 7-a-side fantasy squads
               </span>
               <span className="flex items-center gap-1.5">
-                <Zap className="size-4 text-primary" /> $100m starting budget
+                <Zap className="size-4 text-primary" /> $70m starting budget
               </span>
               <span className="flex items-center gap-1.5">
                 <Timer className="size-4 text-primary" /> Live match centers
@@ -201,7 +201,7 @@ export default function Landing() {
             {[
               {
                 title: "Register your team",
-                body: "Pick a username, team name and crest. You get a $100m budget to spend.",
+                body: "Pick a username, team name and crest. You get a $70m budget to spend.",
               },
               {
                 title: "Draft 7 starters",

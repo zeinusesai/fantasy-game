@@ -23,13 +23,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
+import { formatMoney, parseMoneyInput, safeBudget } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { toast } from "sonner";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { AlertTriangle, Check, Coins, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/hooks/use-auth";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { House, Position } from "@/convex/schema";
 
@@ -75,6 +76,7 @@ function MarketPhoto({
 }
 
 export default function SquadBuilder() {
+  const { user } = useAuth();
   const playersResult = useQuery(api.players.listPlayers);
   const mySquadResult = useQuery(api.squads.getMySquad);
   const config = useQuery(api.config.getConfig);
@@ -98,7 +100,12 @@ export default function SquadBuilder() {
   const mySquad = mySquadResult ?? null;
   const loading = playersResult === undefined || mySquadResult === undefined;
 
-  const budget = config?.budget ?? 100_000_000;
+  // $70m platform baseline. A Super-Admin customBudget override (or legacy
+  // stored budget) wins; safeBudget guards NaN/Infinity/missing values so
+  // budget math can never produce NaN — unconfigured users get $70m.
+  const budget = safeBudget(
+    user?.customBudget ?? user?.budget ?? config?.budget,
+  );
   const houseLimit = config?.houseLimit ?? 3;
 
   const [selected, setSelected] = useState<Id<"players">[]>([]);
@@ -179,7 +186,8 @@ export default function SquadBuilder() {
     .map((id) => playerMap.get(id))
     .filter((p): p is NonNullable<typeof p> => Boolean(p));
 
-  const totalSpent = selectedPlayers.reduce((sum, p) => sum + p.price, 0);
+  const totalSpentRaw = selectedPlayers.reduce((sum, p) => sum + (p.price ?? 0), 0);
+  const totalSpent = Number.isFinite(totalSpentRaw) ? totalSpentRaw : 0;
   const remaining = budget - totalSpent;
 
   const positionCounts = selectedPlayers.reduce(

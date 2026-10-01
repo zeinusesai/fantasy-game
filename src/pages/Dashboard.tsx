@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatMoney } from "@/convex/configDefaults";
+import { formatMoney, safeBudget } from "@/convex/configDefaults";
 import { STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -170,7 +170,7 @@ export default function Dashboard() {
             value={
               mySquad
                 ? formatMoney(mySquad.totalSpent)
-                : formatMoney(config?.budget ?? 100_000_000)
+                : formatMoney(safeBudget(config?.budget))
             }
           />
         </div>

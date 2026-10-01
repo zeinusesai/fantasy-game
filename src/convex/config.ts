@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import { requireSuperAdmin, getPlatformConfig } from "./lib";
 import { CONFIG_KEYS } from "./configDefaults";
 
@@ -106,5 +106,33 @@ export const setHouseLimit = mutation({
       });
     }
     return houseLimit;
+  },
+});
+
+/**
+ * Internal (server/CLI tooling only — unreachable from the client): upsert
+ * the stored global budget. Used for platform-default migrations; strictly
+ * validates the number before writing.
+ */
+export const setBudgetInternal = internalMutation({
+  args: { budget: v.number() },
+  handler: async (ctx, { budget }) => {
+    const value = Number(budget);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error("Budget must be a non-negative, finite number.");
+    }
+    const existing = await ctx.db
+      .query("config")
+      .withIndex("by_key", (q) => q.eq("key", CONFIG_KEYS.BUDGET))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { value: Math.round(value) });
+    } else {
+      await ctx.db.insert("config", {
+        key: CONFIG_KEYS.BUDGET,
+        value: Math.round(value),
+      });
+    }
+    return Math.round(value);
   },
 });

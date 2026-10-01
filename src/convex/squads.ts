@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
-import { formatMoney } from "./configDefaults";
+import { formatMoney, safeBudget } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
 
 const REQUIRED_FORMATION: Record<string, number> = {
@@ -244,18 +244,36 @@ export const saveSquad = mutation({
       }
     }
 
-    // Budget
+    // Budget — wrapped so an unexpected math failure surfaces as a clean
+    // message instead of a raw server error; validation Errors rethrow
+    // untouched so the client toast keeps its specific guidance.
     const totalSpent = players.reduce((sum, p) => sum + (p?.price ?? 0), 0);
-    if (totalSpent > budget) {
-      throw new Error(
-        `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(budget)}.`,
-      );
-    }
-    const myBudget = user.customBudget ?? user.budget ?? budget;
-    if (totalSpent > myBudget) {
-      throw new Error(
-        `Squad exceeds your available budget: ${formatMoney(myBudget)}.`,
-      );
+    try {
+      if (!Number.isFinite(totalSpent)) {
+        throw new Error("Squad value could not be calculated — please refresh and try again.");
+      }
+      // Effective budget: Super Admin override (customBudget, or the legacy
+      // stored budget) → platform default ($70m). safeBudget guards against
+      // NaN/Infinity/negatives so comparisons can never silently pass.
+      const overrideRaw = user.customBudget ?? user.budget;
+      const hasOverride = typeof overrideRaw === "number";
+      // The global cap only binds managers without an explicit override —
+      // otherwise a raised budget (e.g. $75m over a $70m global) would be
+      // rejected by the global check before the override is considered.
+      if (!hasOverride && totalSpent > budget) {
+        throw new Error(
+          `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(budget)}.`,
+        );
+      }
+      const myBudget = safeBudget(hasOverride ? overrideRaw : budget, budget);
+      if (totalSpent > myBudget) {
+        throw new Error(
+          `Squad exceeds your available budget: ${formatMoney(myBudget)}.`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not validate your squad budget — please try again.");
     }
 
     const existing = await getSquadForUser(ctx, user._id);

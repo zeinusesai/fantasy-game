@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatMoney } from "@/convex/configDefaults";
+import { formatMoney, safeBudget } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import {
@@ -225,7 +225,7 @@ export default function Profile() {
               <p className="font-score text-muted-foreground text-sm font-semibold">
                 Budget left:{" "}
                 <span className="text-emerald-400">
-                  {formatMoney(Math.max((config?.budget ?? 0) - (mySquad?.totalSpent ?? 0), 0))}
+                  {formatMoney(Math.max(safeBudget(config?.budget) - (mySquad?.totalSpent ?? 0), 0))}
                 </span>
               </p>
             </CardHeader>

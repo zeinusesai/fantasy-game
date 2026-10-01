@@ -1502,7 +1502,7 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
   const handleBudget = async () => {
     const parsed = parseMoneyInput(budgetInput ?? "");
     if (parsed === null) {
-      toast.error('Enter a valid budget, e.g. "100m" or "100000000".');
+      toast.error('Enter a valid budget, e.g. "70m" or "70000000".');
       return;
     }
     setBusy(true);
@@ -1577,7 +1577,7 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
                 id="global-budget"
                 value={budgetValue}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                placeholder='e.g. "100m" or "100000000"'
+                placeholder='e.g. "70m" or "70000000"'
               />
             </div>
             <Button onClick={handleBudget} disabled={busy || !config}>

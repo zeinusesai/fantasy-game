@@ -6,7 +6,7 @@ export const CONFIG_KEYS = {
 } as const;
 
 export const DEFAULT_CONFIG = {
-  budget: 100_000_000,
+  budget: 70_000_000, // $70m global starting budget
   houseLimit: 3,
 };
 
@@ -38,6 +38,17 @@ export function parseMoneyInput(raw: string): number | null {
 
 export function normalizeUsername(raw: string): string {
   return raw.trim().toLowerCase();
+}
+
+/**
+ * Defensive budget coercion: any missing/NaN/Infinity/negative budget value
+ * falls back to the platform default so arithmetic downstream can never
+ * silently pass validation on `NaN` (NaN > x is always false).
+ */
+export function safeBudget(value: number | null | undefined, fallback: number = DEFAULT_CONFIG.budget): number {
+  if (typeof value !== "number") return fallback;
+  if (!Number.isFinite(value) || value < 0) return fallback;
+  return value;
 }
 
 // House color tokens used across UI + seed logo SVGs.
