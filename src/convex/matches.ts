@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { query, mutation, type MutationCtx } from "./_generated/server";
 import { requireSuperAdmin } from "./lib";
 import {
@@ -804,6 +805,18 @@ async function recalculateMatchPoints(
       points: pts,
     });
   }
+
+  // Live awards engine: every match mutation funnels through here, so
+  // refreshing the tournament awards right now guarantees Tactical Genius /
+  // Unlucky Manager / Differential Master / Player of the Week are always in
+  // sync with the latest score — no manual reset, no admin action.
+  // Best-effort: a failed refresh must never roll back the match itself.
+  try {
+    await ctx.runMutation(internal.awards.recalculateAwards, {});
+  } catch {
+    // awards refresh is non-fatal
+  }
+
   return squads.length;
 }
 

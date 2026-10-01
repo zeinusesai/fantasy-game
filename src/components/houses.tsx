@@ -2,7 +2,18 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { HOUSE_META } from "@/convex/configDefaults";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import type { House, Position } from "@/convex/schema";
+
+/**
+ * Display name for a house, honouring the Super Admin's custom rename.
+ * The colours/crests stay keyed to the internal house id, so renaming a
+ * house never breaks its theming — only the text changes.
+ */
+export function useHouseName(): (house: House | string | null | undefined) => string {
+  const { houseName } = useAdminConfig();
+  return (house) => houseName(house);
+}
 
 /** Resolve the house color (custom logos override the default palette). */
 export function useHouseLogos(): Record<House, string | null> {
@@ -55,12 +66,14 @@ export function HouseCrest({
   className?: string;
 }) {
   const logos = useHouseLogos();
+  const houseName = useHouseName();
+  const label = houseName(house);
   const custom = logos[house];
   if (custom) {
     return (
       <img
         src={custom}
-        alt={`${house} crest`}
+        alt={`${label} crest`}
         width={size}
         height={size}
         className={cn("rounded-lg object-cover ring-1", RING_COLORS[house], className)}
@@ -82,14 +95,16 @@ export function HouseCrest({
         color: HOUSE_META[house].color,
         background: `${HOUSE_META[house].color}1a`,
       }}
-      aria-label={`${house} crest`}
+      aria-label={`${label} crest`}
+      title={label}
     >
-      {house.slice(0, 2)}
+      {label.slice(0, 2)}
     </span>
   );
 }
 
 export function HouseBadge({ house, className }: { house: House; className?: string }) {
+  const houseName = useHouseName();
   return (
     <span
       className={cn(
@@ -98,9 +113,10 @@ export function HouseBadge({ house, className }: { house: House; className?: str
         TEXT_COLORS[house],
         className,
       )}
+      title={houseName(house)}
     >
       <HouseDot house={house} />
-      {house}
+      {houseName(house)}
     </span>
   );
 }

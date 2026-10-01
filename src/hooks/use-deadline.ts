@@ -8,12 +8,16 @@ export type DeadlineState = {
   nearestDeadline: number | null;
   /** Stage id the nearest deadline belongs to. */
   stage: string | null;
+  /** Gameweek (1 or 2) the nearest deadline belongs to, or null. */
+  gameweek: number | null;
   /** Minutes left until the nearest deadline (rounded down). */
   minutesLeft: number | null;
   /** True when a deadline is < 60 minutes away — triggers the panic banner. */
   panic: boolean;
   /** True when any deadline has fully passed without settle (read-only hint). */
   anyExpired: boolean;
+  /** True when the server has closed transfers entirely. */
+  transfersClosed: boolean;
   label: string;
 };
 
@@ -25,6 +29,19 @@ export type DeadlineState = {
 export function useDeadlineBanner(): DeadlineState {
   const gwStatus = useQuery(api.gameweeks.getGameweekStatus) ?? {
     byStage: {} as Record<string, { deadlineAt: number | null; locked: boolean; settled: boolean }>,
+    byGameweek: [] as Array<{
+      number: number;
+      label: string;
+      shortLabel: string;
+      summary: string;
+      stages: readonly string[];
+      settled: boolean;
+      locked: boolean;
+      closed: boolean;
+      nextDeadlineAt: number | null;
+    }>,
+    activeGameweek: null as number | null,
+    lockReason: null as string | null,
   };
 
   // Ticking clock — re-render every 30s so countdowns stay fresh.
@@ -35,6 +52,10 @@ export function useDeadlineBanner(): DeadlineState {
   }, []);
 
   const byStage = gwStatus?.byStage ?? {};
+  // Server-authoritative: identical helper to the one `saveSquad` uses, so
+  // the banner can never claim transfers are open when the backend will
+  // reject the change (or vice-versa).
+  const transfersClosed = gwStatus?.lockReason != null;
 
   // Nearest future deadline.
   let nearestDeadline: number | null = null;
@@ -54,9 +75,23 @@ export function useDeadlineBanner(): DeadlineState {
     }
   }
 
+  // Which gameweek the nearest deadline belongs to (GW1 = semifinals,
+  // GW2 = 3rd place + final). Derived from the live gameweek list.
+  let gameweek: number | null = null;
+  for (const gw of gwStatus?.byGameweek ?? []) {
+    if (!gw || !Array.isArray(gw.stages)) continue;
+    if (stage !== null && gw.stages.includes(stage)) {
+      gameweek = gw.number;
+      break;
+    }
+  }
+  if (gameweek === null && transfersClosed) {
+    gameweek = gwStatus?.activeGameweek ?? null;
+  }
+
   const minutesLeft =
     nearestDeadline !== null ? Math.max(0, Math.floor((nearestDeadline - now) / 60000)) : null;
-  const panic = nearestDeadline !== null && nearestDeadline - now < 60 * 60 * 1000;
+  const panic = !transfersClosed && nearestDeadline !== null && nearestDeadline - now < 60 * 60 * 1000;
 
   // One-shot browser notification at T-30 and T-10 (never double-fires).
   useEffect(() => {
@@ -77,10 +112,22 @@ export function useDeadlineBanner(): DeadlineState {
     );
   }, [nearestDeadline, stage]);
 
+  // Prefer the server's gameweek number (single source of truth) and fall
+  // back to the stage→GW mapping only if it is somehow unavailable.
+  const gwNumber = gameweek ?? (stage === "semifinal1" || stage === "semifinal2" ? 1 : 2);
   const label =
-    stage !== null && minutesLeft !== null
-      ? `GW${stage === "semifinal1" || stage === "semifinal2" ? "1" : "2"} · ${minutesLeft} min left`
+    minutesLeft !== null
+      ? `GW${gwNumber} · ${minutesLeft} min left`
       : "";
 
-  return { nearestDeadline, stage, minutesLeft, panic, anyExpired, label };
+  return {
+    nearestDeadline,
+    stage,
+    gameweek,
+    minutesLeft,
+    panic,
+    anyExpired,
+    transfersClosed,
+    label,
+  };
 }

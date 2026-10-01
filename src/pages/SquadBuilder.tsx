@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { PitchView } from "@/components/PitchView";
-import { HouseBadge, HouseCrest, PositionChip } from "@/components/houses";
+import { HouseBadge, HouseCrest, PositionChip, useHouseName } from "@/components/houses";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -105,11 +106,18 @@ export default function SquadBuilder() {
   const mySquad = mySquadResult ?? null;
   const loading = playersResult === undefined || mySquadResult === undefined;
 
-  // Every manager shares ONE fixed $70m budget. safeBudget() ignores any
-  // per-user/legacy value and always resolves to the platform constant, so
-  // this can never be NaN, Infinity or undefined — even before auth loads.
-  const budget = safeBudget();
+  // Every manager's budget is the fixed $70m platform default unless the
+  // Super Admin set a per-manager override (always capped at $70m).
+  // safeBudget re-asserts the result is finite and non-negative, so this can
+  // never be NaN, Infinity or undefined — even before auth loads.
+  const { budgetOverrides, awardFor } = useAdminConfig();
+  const override = user?._id ? budgetOverrides[String(user._id)] : undefined;
+  const budget = safeBudget(
+    typeof override === "number" && override > 0 ? override : undefined,
+  );
   const houseLimit = config?.houseLimit ?? 3;
+  // Super-Admin customizations: house display names + award copy.
+  const houseName = useHouseName();
 
   const [selected, setSelected] = useState<Id<"players">[]>([]);
   const [captainId, setCaptainId] = useState<Id<"players"> | null>(null);
@@ -136,8 +144,10 @@ export default function SquadBuilder() {
   // ── Player details modal state ──
   const [detailFor, setDetailFor] = useState<PlayerRow | null>(null);
 
-  // ── Player of the Week highlight (top scorer from the awards query) ──
-  const awards = useQuery(api.gameweeks.getTournamentAwards);
+  // ── Player of the Week highlight (top scorer from the awards engine) ──
+  // Snapshot is rewritten after every match update, so the golden ring on the
+  // market card follows the latest result automatically.
+  const awards = useQuery(api.awards.getAwards);
   const potwId: string | null = awards?.playerOfTheWeek?.playerId ?? null;
 
   // ── Manager pick inspection ("Picked by …") state ──
@@ -151,16 +161,12 @@ export default function SquadBuilder() {
   const chipBusy = useState(false);
   const setChipBusy = chipBusy[1];
 
-  // Read-only when any stage is past its deadline, locked or settled.
+  // Read-only when the server says transfers are closed. The server is the
+  // single authority (same helper it uses in saveSquad), so the UI can never
+  // disagree with what the backend will actually accept.
   const readOnly = (() => {
     try {
-      const byStage = gwStatus?.byStage ?? {};
-      for (const state of Object.values(byStage)) {
-        if (!state) continue;
-        if (state.settled === true || state.locked === true) return true;
-        if (typeof state.deadlineAt === "number" && Date.now() > state.deadlineAt) return true;
-      }
-      return false;
+      return gwStatus?.lockReason != null;
     } catch {
       return false; // fail-open: never soft-lock the builder on a query error
     }
@@ -330,7 +336,7 @@ export default function SquadBuilder() {
 
   const toggle = (id: Id<"players">) => {
     if (readOnly) {
-      toast.error("Transfers are locked — the deadline has passed.");
+      toast.error(gwStatus?.lockReason ?? "Transfers are locked.");
       return;
     }
     if (selected.includes(id)) {
@@ -402,7 +408,7 @@ export default function SquadBuilder() {
                 Squad builder
                 {readOnly && (
                   <Badge variant="outline" className="gap-1 border-red-400/50 bg-red-500/10 text-red-300">
-                    <Lock className="size-3" /> READ-ONLY · deadline passed
+                    <Lock className="size-3" /> READ-ONLY · {gwStatus?.lockReason ?? "transfers closed"}
                   </Badge>
                 )}
               </h1>
@@ -660,7 +666,7 @@ export default function SquadBuilder() {
                                 {p.name}
                               </p>
                               <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
-                                {p.house} <PositionChip position={p.position} />
+                                {houseName(p.house)} <PositionChip position={p.position} />
                               </p>
                               {/* Ownership: exact pick count + % — safe at 0 squads.
                                   The count is a button: opens the pick-inspection
@@ -685,7 +691,7 @@ export default function SquadBuilder() {
                               {/* Player of the Week crown badge */}
                               {potwId !== null && String(p._id) === String(potwId) && (
                                 <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-gradient-to-r from-amber-400/25 to-yellow-500/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-200">
-                                  👑 Player of the Week
+                                  👑 {awardFor("playerOfTheWeek").title}
                                 </span>
                               )}
                               {mostPicked && String(mostPicked.playerId) === String(p._id) && (

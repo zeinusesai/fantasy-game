@@ -49,11 +49,28 @@ import { toast } from "sonner";
 export default function Leaderboard() {
   const { user } = useAuth();
   const leaderboardResult = useQuery(api.managers.getLeaderboard);
-  const awardsResult = useQuery(api.gameweeks.getTournamentAwards);
+  // Live awards engine snapshot — rewritten after every match update.
+  const awardsResult = useQuery(api.awards.getAwards);
+  // Post-tournament state: podium champion + bottom-place forfeits. Both
+  // render on ACTIVE and FINALIZED leaderboards (the forfeit list only fills
+  // once the Super Admin ends the tournament).
+  const resultsResult = useQuery(api.tournament.getTournamentResults);
 
   const rows = leaderboardResult ?? [];
   const loading = leaderboardResult === undefined;
   const medalStyles = ["text-amber-300", "text-slate-300", "text-orange-300"];
+
+  // Safe fallbacks: `?? []` / `?? null` everywhere, so an empty or failed
+  // query simply omits the badges rather than crashing the table.
+  const forfeitIds = new Set(
+    (resultsResult?.forfeits ?? [])
+      .map((f) => String(f.userId ?? ""))
+      .filter((id) => id.length > 0),
+  );
+  const championId = resultsResult?.champion?.userId
+    ? String(resultsResult.champion.userId)
+    : null;
+  const tournamentEnded = resultsResult?.tournamentEnded === true;
 
   // Rival Squad Inspector — clicking a team opens the drawer for that manager.
   const [inspectUserId, setInspectUserId] = useState<Id<"users"> | null>(null);
@@ -106,6 +123,13 @@ export default function Leaderboard() {
                     const isGenius = awardsResult?.tacticalGenius?.userId === row.userId;
                     const isUnlucky = awardsResult?.unluckyManager?.userId === row.userId;
                     const isDiffMaster = awardsResult?.differentialMaster?.userId === row.userId;
+                    // 🥇 Plastic Gold Medalist — the 1st place manager. Uses the
+                    // tournament result's champion when available, and falls
+                    // back to rank 1 so an active board still shows it.
+                    const isGoldMedalist =
+                      championId !== null ? championId === String(row.userId) : row.rank === 1;
+                    // ⚠️ Forfeit — bottom place (set on end-tournament).
+                    const isForfeit = forfeitIds.has(String(row.userId));
                     const avatar =
                       row.avatar?.startsWith("data:") || row.avatar?.startsWith("http")
                         ? row.avatar
@@ -174,12 +198,32 @@ export default function Leaderboard() {
                               {isDiffMaster && (
                                 <span title="Differential Master — most points from <15% owned players" className="shrink-0 rounded-full border border-fuchsia-400/50 bg-fuchsia-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-fuchsia-300">🎯 Diff Master</span>
                               )}
+                              {/* 🥇 Plastic Gold Medalist — 1st place. */}
+                              {isGoldMedalist && (
+                                <span
+                                  title="🥇 Plastic Gold Medalist — 1st place"
+                                  className="shrink-0 rounded-full border border-amber-300/70 bg-gradient-to-r from-amber-300/30 to-yellow-500/20 px-1.5 text-[9px] font-black uppercase tracking-wide text-amber-100 shadow-[0_0_10px_rgba(251,191,36,0.35)]"
+                                >
+                                  🥇 Plastic Gold Medalist
+                                </span>
+                              )}
+                              {/* ⚠️ Forfeit — bottom place. */}
+                              {isForfeit && (
+                                <span
+                                  title="⚠️ Forfeit assigned — bottom of the table"
+                                  className="shrink-0 rounded-full border border-red-400/60 bg-red-500/20 px-1.5 text-[9px] font-black uppercase tracking-wide text-red-200"
+                                >
+                                  ⚠️ Forfeit
+                                </span>
+                              )}
                             </span>
                             <Eye className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
                             {row.rank === 1 && row.totalPoints > 0 && (
                               <Badge className="gap-1 whitespace-normal border border-amber-400/40 bg-amber-400/15 py-1 text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
                                 <Trophy className="size-3 shrink-0" />
-                                CURRENTLY WINNING: 1x Premium Grade Plastic Medal (Priceless)
+                                {tournamentEnded
+                                  ? "FINAL STANDINGS: 1st — Plastic Golden Medal"
+                                  : "CURRENTLY WINNING: 1x Premium Grade Plastic Medal (Priceless)"}
                               </Badge>
                             )}
                           </button>

@@ -69,18 +69,21 @@ export function normalizeUsername(raw: string): string {
 }
 
 /**
- * The one and only budget resolver. The argument is accepted (and ignored)
- * so legacy call sites keep compiling, but the result is ALWAYS the fixed
- * $70m platform budget.
+ * The one and only budget resolver.
  *
- * Why this is a constant resolver rather than validation: a per-user budget
- * that could be missing, `NaN`, `Infinity`, negative or tampered with is a
- * silent data-integrity hole — `NaN > x` is always false, so a corrupt value
- * would pass every squad budget check. Returning a literal removes the whole
- * class of failure. Always finite, always non-negative, never user-supplied.
+ * Every manager's budget is the fixed $70m platform default. A Super-Admin
+ * per-manager override may LOWER it, but can never raise it above the cap —
+ * so `safeBudget` always returns `min(override, $70m)`.
+ *
+ * Any value that is missing, `NaN`, `Infinity`, zero or negative falls back
+ * to the full platform budget. This matters: `NaN > x` is always false, so a
+ * corrupt value would otherwise silently PASS every squad budget check.
+ * The result is always finite and non-negative.
  */
-export function safeBudget(_value?: number | null): number {
-  return FIXED_MANAGER_BUDGET;
+export function safeBudget(value?: number | null): number {
+  if (typeof value !== "number") return FIXED_MANAGER_BUDGET;
+  if (!Number.isFinite(value) || value <= 0) return FIXED_MANAGER_BUDGET;
+  return Math.min(Math.round(value), FIXED_MANAGER_BUDGET);
 }
 
 /**

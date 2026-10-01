@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HOUSES, STAGE_LABELS, avatarPresetUrl } from "@/lib/fantasy";
+import { useAdminConfig } from "@/hooks/use-admin-config";
+import { useHouseName } from "@/components/houses";
 import { cn } from "@/lib/utils";
 import type { House, Stage } from "@/convex/schema";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -216,6 +218,7 @@ const HOUSE_ACCENT: Record<string, string> = {
 export function HouseStandingsCard() {
   // Safe fallback: loading/empty DB → the four houses at zero.
   const standings = useQuery(api.gameweeks.getHouseStandings) ?? [];
+  const houseName = useHouseName();
   const rows = standings.length === 0
     ? HOUSES.map((house) => ({ house, totalPoints: 0, managerCount: 0, avgPoints: 0 }))
     : standings;
@@ -234,7 +237,7 @@ export function HouseStandingsCard() {
             className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-secondary/30 px-3 py-2"
           >
             <span className={cn("text-sm font-bold", HOUSE_ACCENT[row.house] ?? "")}>
-              {row.house}
+              {houseName(row.house)}
             </span>
             <div className="text-right">
               <p className="font-score text-sm font-bold">
@@ -253,8 +256,7 @@ export function HouseStandingsCard() {
 
 // ── Golden Footprints / Golden Glove widget ────────────────────────────────────
 
-export function StatsRacesCard() {
-  const stats = useQuery(api.gameweeks.getTournamentStats) ?? {
+export function StatsRacesCard() {        const stats = useQuery(api.gameweeks.getTournamentStats) ?? {
     goldenBoot: null,
     goldenGlove: null,
     matchesPlayed: 0,
@@ -307,47 +309,84 @@ export function StatsRacesCard() {
 // ── Awards (Tactical Genius / Unlucky / Differential / PotW) ─────────────
 
 export function AwardsCard() {
-  const awards = useQuery(api.gameweeks.getTournamentAwards) ?? {
-    tacticalGenius: null,
-    unluckyManager: null,
-    differentialMaster: null,
-    playerOfTheWeek: null,
+  // Live awards engine snapshot — rewritten after every match update, so
+  // this card, the leaderboard chips and the draft list all update together.
+  // Safe fallback per spec: every award is independently nullable.
+  const awards = useQuery(api.awards.getAwards) ?? {
+    tacticalGenius: null as { userId: string; username: string; teamName: string; points: number } | null,
+    unluckyManager: null as { userId: string; username: string; teamName: string; points: number } | null,
+    differentialMaster: null as { userId: string; username: string; teamName: string; points: number } | null,
+    playerOfTheWeek: null as { playerId: string; playerName: string; house: string; points: number } | null,
+    updatedAt: null as number | null,
   };
+  // Titles + descriptions are Super-Admin editable via useAdminConfig.
+  const { awardFor } = useAdminConfig();
+
+  const genius = awardFor("tacticalGenius");
+  const unlucky = awardFor("unluckyManager");
+  const diff = awardFor("differentialMaster");
+  const potw = awardFor("playerOfTheWeek");
 
   return (
     <Card className="card-sheen border-primary/30 bg-primary/5">
       <CardHeader className="pb-2">
-        <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
-          <Award className="text-primary size-4" /> Tournament awards
+        <CardTitle className="font-display flex items-center justify-between gap-2 text-lg font-bold uppercase tracking-wide">
+          <span className="flex items-center gap-2">
+            <Award className="text-primary size-4" /> Tournament awards
+          </span>
+          {awards.updatedAt !== null && (
+            <span
+              className="text-muted-foreground text-[10px] font-normal normal-case"
+              title="Automatically recalculated after every match update"
+            >
+              live
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="grid gap-2 sm:grid-cols-2">
         <AwardRow
           icon={<Crown className="size-3.5" />}
-          label="Tactical Genius"
+          label={genius.title}
           value={awards.tacticalGenius ? awards.tacticalGenius.teamName : null}
-          sub={awards.tacticalGenius ? `@${awards.tacticalGenius.username} · ${awards.tacticalGenius.totalPoints} pts` : "Top total wins"}
+          sub={
+            awards.tacticalGenius
+              ? `@${awards.tacticalGenius.username} · ${awards.tacticalGenius.points} pts`
+              : genius.description
+          }
           tone="border-amber-400/40 bg-amber-400/10 text-amber-300"
         />
         <AwardRow
           icon={<Medal className="size-3.5" />}
-          label="Unlucky Manager"
+          label={unlucky.title}
           value={awards.unluckyManager ? awards.unluckyManager.teamName : null}
-          sub={awards.unluckyManager ? `@${awards.unluckyManager.username} · ${awards.unluckyManager.totalPoints} pts` : "Bottom of the table"}
+          sub={
+            awards.unluckyManager
+              ? `@${awards.unluckyManager.username} · ${awards.unluckyManager.points} pts`
+              : unlucky.description
+          }
           tone="border-slate-400/40 bg-slate-400/10 text-slate-300"
         />
         <AwardRow
           icon={<Target className="size-3.5" />}
-          label="🎯 Differential Master"
+          label={`🎯 ${diff.title}`}
           value={awards.differentialMaster ? awards.differentialMaster.teamName : null}
-          sub={awards.differentialMaster ? `@${awards.differentialMaster.username} · ~${awards.differentialMaster.diffPoints} pts from <15% picks` : "Most points from low-owned players"}
+          sub={
+            awards.differentialMaster
+              ? `@${awards.differentialMaster.username} · ~${awards.differentialMaster.points} pts from <15% picks`
+              : diff.description
+          }
           tone="border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-300"
         />
         <AwardRow
           icon={<Star className="size-3.5" />}
-          label="Player of the Week"
+          label={potw.title}
           value={awards.playerOfTheWeek ? awards.playerOfTheWeek.playerName : null}
-          sub={awards.playerOfTheWeek ? `${awards.playerOfTheWeek.house} · ${awards.playerOfTheWeek.points} pts` : "Latest gameweek's top scorer"}
+          sub={
+            awards.playerOfTheWeek
+              ? `${awards.playerOfTheWeek.house} · ${awards.playerOfTheWeek.points} pts`
+              : potw.description
+          }
           tone="border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
         />
       </CardContent>

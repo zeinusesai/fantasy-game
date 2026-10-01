@@ -10,6 +10,7 @@ import {
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireSuperAdmin } from "./lib";
 import { FIXED_MANAGER_BUDGET } from "./configDefaults";
+import { normalizeSettings, getSettingsRow } from "./adminConfig";
 import { internal } from "./_generated/api";
 import { modifyAccountCredentials, invalidateSessions } from "@convex-dev/auth/server";
 import { houseValidator } from "./schema";
@@ -200,20 +201,7 @@ export const assignUserBadge = mutation({
     }
 
     const key = typeof badgeType === "string" ? badgeType.trim().toLowerCase() : "";
-    const VALID_BADGES = [
-      "none",
-      "star",
-      "gold_checkmark",
-      "fire",
-      "crown",
-      "shield",
-      "diamond",
-      "contributor",
-    ] as const;
-    type BadgeKey = (typeof VALID_BADGES)[number];
-    if (!(VALID_BADGES as readonly string[]).includes(key)) {
-      throw new Error(`Unknown badge "${key}".`);
-    }
+    if (!key) throw new Error("Unknown badge.");
 
     try {
       const target = await ctx.db.get(targetUserId);
@@ -224,12 +212,19 @@ export const assignUserBadge = mutation({
         await ctx.db.patch(targetUserId, { customBadge: undefined });
         return { badge: null };
       }
-      await ctx.db.patch(targetUserId, { customBadge: key as BadgeKey });
+
+      // Validate against the LIVE registry: built-ins plus any custom badge
+      // ids the Super Admin created in the Customization tab.
+      const registry = normalizeSettings(await getSettingsRow(ctx)).badgeRegistry;
+      const meta = registry[key];
+      if (!meta) throw new Error(`Unknown badge "${key}".`);
+
+      await ctx.db.patch(targetUserId, { customBadge: key });
       // Activity feed: badge assignment (defensive, non-fatal).
       try {
         await ctx.runMutation(internal.activity.logActivity, {
           type: "badge",
-          text: `🏅 @${target.username ?? "a manager"} was awarded the "${key}" badge by the Super Admin!`,
+          text: `🏅 @${target.username ?? "a manager"} was awarded the "${meta.label}" badge by the Super Admin!`,
           actorUserId: targetUserId,
         });
       } catch {

@@ -3,6 +3,13 @@ import { query, mutation, internalMutation, type MutationCtx, type QueryCtx } fr
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireSuperAdmin } from "./lib";
 import { GW_STAGES, CHIP_GW1, CHIP_GW2, chipForStage } from "./configDefaults";
+import {
+  GAMEWEEKS,
+  activeGameweek,
+  gameweekForStage,
+  stagesForGameweek,
+  transferLockReason,
+} from "./gameweekStructure";
 import { stageValidator } from "./schema";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -11,12 +18,17 @@ import type { Id } from "./_generated/dataModel";
 
 /**
  * Public gameweek state for the UI: deadline countdowns, manual locks and
- * settle flags per stage. Never throws; returns safe defaults for a fresh
- * database (no rows → everything unlocked and open).
+ * settle flags per stage, plus the derived "which gameweek is live" answer.
+ * Never throws; returns safe defaults for a fresh database (no rows →
+ * everything unlocked and open).
  */
 export const getGameweekStatus = query({
   args: {},
   handler: async (ctx) => {
+    const emptyByStage: Record<
+      string,
+      { deadlineAt: number | null; locked: boolean; settled: boolean }
+    > = {};
     try {
       const rows = await ctx.db.query("gameweeks").collect();
       const byStage: Record<
@@ -33,9 +45,59 @@ export const getGameweekStatus = query({
           settled: row.settled === true,
         };
       }
-      return { byStage };
+      const now = Date.now();
+      // Per-gameweek view: the earliest upcoming deadline drives the panic
+      // banner, and `closed` is what the squad builder's read-only mode uses.
+      const byGameweek = GAMEWEEKS.map((gw) => {
+        const stages = gw.stages.map(
+          (s) => byStage[s] ?? { deadlineAt: null, locked: false, settled: false },
+        );
+        const deadlines = stages
+          .map((s) => s.deadlineAt)
+          .filter((d): d is number => typeof d === "number" && d > now);
+        const nextDeadlineAt = deadlines.length > 0 ? Math.min(...deadlines) : null;
+        const settled = stages.every((s) => s.settled === true);
+        const locked = stages.some((s) => s.locked === true);
+        const expired = stages.some(
+          (s) => typeof s.deadlineAt === "number" && now > s.deadlineAt,
+        );
+        const isClosed = settled || (locked && expired) || expired;
+        return {
+          number: gw.number,
+          label: gw.label,
+          shortLabel: gw.shortLabel,
+          summary: gw.summary,
+          stages: gw.stages,
+          settled,
+          locked,
+          closed: isClosed,
+          nextDeadlineAt,
+        };
+      });
+
+      return {
+        byStage,
+        byGameweek,
+        activeGameweek: activeGameweek(byStage, now),
+        lockReason: transferLockReason(byStage, now),
+      };
     } catch {
-      return { byStage: {} as Record<string, { deadlineAt: number | null; locked: boolean; settled: boolean }> };
+      return {
+        byStage: emptyByStage,
+        byGameweek: GAMEWEEKS.map((gw) => ({
+          number: gw.number,
+          label: gw.label,
+          shortLabel: gw.shortLabel,
+          summary: gw.summary,
+          stages: gw.stages,
+          settled: false,
+          locked: false,
+          closed: false,
+          nextDeadlineAt: null,
+        })),
+        activeGameweek: activeGameweek(emptyByStage),
+        lockReason: null,
+      };
     }
   },
 });
@@ -56,10 +118,12 @@ async function getStageLockReason(
       .collect();
     const row = rows[0];
     if (!row) return null; // unconfigured → open
-    if (row.settled === true) return "This gameweek has been settled and can no longer be edited.";
-    if (row.locked === true) return "Transfers are locked for this gameweek.";
+    const gw = gameweekForStage(stage);
+    const gwLabel = gw === 1 ? "Gameweek 1" : gw === 2 ? "Gameweek 2" : "this gameweek";
+    if (row.settled === true) return `${gwLabel} has been settled and can no longer be edited.`;
+    if (row.locked === true) return `Transfers are locked for ${gwLabel}.`;
     if (typeof row.deadlineAt === "number" && Date.now() > row.deadlineAt) {
-      return "The transfer deadline for this gameweek has passed.";
+      return `The transfer deadline for ${gwLabel} has passed.`;
     }
     return null;
   } catch {

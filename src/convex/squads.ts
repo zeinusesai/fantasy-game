@@ -3,6 +3,8 @@ import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
 import { formatMoney, safeBudget, toSafeAmount, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
+import { transferLockReason } from "./gameweekStructure";
+import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
 import { stageValidator } from "./schema";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -147,9 +149,10 @@ export const getSquadByUserId = query({
       const mine = rows.find((r) => r.userId === userId);
       const rank = mine ? rows.findIndex((r) => r.userId === userId) + 1 : null;
 
-      // Fixed $70m for everyone — per-user budget/customBudget values are
-      // intentionally ignored (see FIXED_MANAGER_BUDGET).
-      const effectiveBudget = safeBudget(user?.budget);
+      // Fixed $70m platform budget, unless the Super Admin set a (capped)
+      // per-manager override.
+      const settings = normalizeSettings(await getSettingsRow(ctx));
+      const effectiveBudget = resolveManagerBudget(settings, String(userId));
 
       return {
         squadId: squad._id,
@@ -297,10 +300,12 @@ export const saveSquad = mutation({
       if (!Number.isFinite(totalSpent)) {
         throw new Error("Squad value could not be calculated — please refresh and try again.");
       }
-      // The budget is FIXED at $70m for every manager. `budget` already comes
-      // from getPlatformConfig (which returns the constant); re-resolving it
-      // through safeBudget guarantees no stored/legacy value can raise the cap.
-      const myBudget = safeBudget(budget);
+      // The budget is the fixed $70m platform default unless the Super Admin
+      // set a per-manager override. resolveManagerBudget always caps at the
+      // platform budget, so an override can only ever LOWER it — and
+      // safeBudget re-asserts that the result is finite and non-negative.
+      const settings = normalizeSettings(await getSettingsRow(ctx));
+      const myBudget = safeBudget(resolveManagerBudget(settings, String(user._id)));
       if (totalSpent > myBudget) {
         throw new Error(
           `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(myBudget)}.`,
@@ -313,26 +318,27 @@ export const saveSquad = mutation({
 
     const existing = await getSquadForUser(ctx, user._id);
     if (existing) {
-      // Transfer deadline gate: once a stage is locked/settled/past deadline
-      // the saved squad may not change. First-time saves stay allowed so a
-      // manager joining late can still field a team.
+      // Transfer deadline gate: a squad may only change while at least ONE
+      // gameweek is still open (unsettled, unlocked, deadline not passed).
+      // First-time saves stay allowed so a manager joining late can still
+      // field a team.
       const change = existing.playerIds.map(String).join(",") !== playerIds.map(String).join(",");
       if (change) {
         const gwRows = await ctx.db.query("gameweeks").collect();
-        const gwList = gwRows ?? [];
+        const byStage: Record<
+          string,
+          { deadlineAt: number | null; locked: boolean; settled: boolean }
+        > = {};
         for (const stage of GW_STAGES) {
-          const gw = gwList.find((g) => g.stage === stage);
-          if (!gw) continue;
-          if (gw.settled === true) {
-            throw new Error(`Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"} is settled — transfers are closed.`);
-          }
-          if (gw.locked === true) {
-            throw new Error(`Transfers are locked for Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"}.`);
-          }
-          if (typeof gw.deadlineAt === "number" && Date.now() > gw.deadlineAt) {
-            throw new Error(`The transfer deadline for Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"} has passed.`);
-          }
+          const row = gwRows.find((g) => g.stage === stage);
+          byStage[stage] = {
+            deadlineAt: typeof row?.deadlineAt === "number" ? row.deadlineAt : null,
+            locked: row?.locked === true,
+            settled: row?.settled === true,
+          };
         }
+        const reason = transferLockReason(byStage);
+        if (reason) throw new Error(reason);
       }
       await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent });
       // Activity feed: transfer made (defensive, non-fatal).

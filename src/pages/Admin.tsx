@@ -144,6 +144,7 @@ import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { MatchControlCenter } from "@/components/MatchControlCenter";
 import { GameweeksTab } from "@/components/GameweeksTab";
+import { CustomizationTab } from "@/components/CustomizationTab";
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
@@ -251,6 +252,11 @@ export default function Admin() {
             )}
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
             {isSuper && <TabsTrigger value="gameweeks">Gameweeks</TabsTrigger>}
+            {isSuper && (
+              <TabsTrigger value="customize" className="gap-1.5">
+                <SlidersHorizontal className="size-3.5" /> Customize
+              </TabsTrigger>
+            )}
             {isSuper && <TabsTrigger value="users">Users</TabsTrigger>}
             {isSuper && <TabsTrigger value="settings">Settings</TabsTrigger>}
           </TabsList>
@@ -279,6 +285,9 @@ export default function Admin() {
               </TabsContent>
               <TabsContent value="gameweeks" className="mt-4">
                 <GameweeksTab />
+              </TabsContent>
+              <TabsContent value="customize" className="mt-4">
+                <CustomizationTab />
               </TabsContent>
               <TabsContent value="users" className="mt-4">
                 <UsersTab />
@@ -1880,6 +1889,11 @@ function RolesTab() {
   const usersResult = useQuery(api.usersAdmin.listAllUsersWithRoles);
   const updateUserRole = useMutation(api.usersAdmin.updateUserRole);
   const assignUserBadge = useMutation(api.usersAdmin.assignUserBadge);
+  // Live badge registry (built-ins + any custom badge the Super Admin
+  // created in the Customize tab) so new badges appear here immediately.
+  // Safe fallback: an empty/undefined query renders just the built-ins.
+  const badgesResult = useQuery(api.adminConfig.listAssignableBadges);
+  const badgeOptions = (badgesResult ?? []).filter((b) => typeof b.id === "string" && b.id.length > 0);
   const users = (usersResult ?? []) as Array<{
     _id: Id<"users">;
     username: string | null;
@@ -1994,14 +2008,26 @@ function RolesTab() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">✕ No badge</SelectItem>
+                          {/* Built-ins first, then any admin-created badges. */}
                           {ASSIGNABLE_BADGE_KEYS.map((key) => {
                             const meta = BADGE_META[key];
+                            if (!meta) return null;
                             return (
                               <SelectItem key={key} value={key}>
                                 {meta.glyph} {meta.label}
                               </SelectItem>
                             );
                           })}
+                          {badgeOptions
+                            .filter(
+                              (b) =>
+                                !(ASSIGNABLE_BADGE_KEYS as readonly string[]).includes(b.id),
+                            )
+                            .map((b) => (
+                              <SelectItem key={b.id} value={b.id}>
+                                {b.emoji} {b.label}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                       <Select

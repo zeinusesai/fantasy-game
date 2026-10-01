@@ -288,9 +288,57 @@ const schema = defineSchema(
       .index("by_player", ["playerId"])
       .index("by_user", ["userId"]),
 
-    // ===== System-level flags (singleton row) =====
+    // ===== System-level flags + Super Admin customization (singleton row) =====
+    // One row holds every global setting Zein can edit. Every field is
+    // optional so a fresh database returns safe defaults rather than failing.
     systemConfig: defineTable({
-      isMaintenanceMode: v.boolean(),
+      isMaintenanceMode: v.optional(v.boolean()),
+
+      // ── Custom house names: { Fire: "Inferno", Earth: "Titans", ... } ──
+      houseNames: v.optional(v.any()),
+
+      // ── Award copy overrides: { tacticalGenius: { title, description }, ... }
+      awardTitles: v.optional(v.any()),
+
+      // ── Custom badge registry the Super Admin defines and can assign:
+      //    { id: { emoji, label, tone } }
+      badgeRegistry: v.optional(v.any()),
+
+      // ── Per-manager budget overrides: { "<userId>": 70000000 }
+      //    Capped at the fixed global budget; cleared by removing the key.
+      budgetOverrides: v.optional(v.any()),
+
+      // ── Tournament lifecycle ──
+      tournamentEnded: v.optional(v.boolean()),
+      tournamentEndedAt: v.optional(v.number()),
+
+      // ── Year 12 celebration copy ──
+      year12Message: v.optional(v.string()),
+    }),
+
+    // ===== Tournament award snapshot (singleton row) =====
+    // Rewritten by `recalculateAwards` after every match update, so awards
+    // are served from storage (fast, consistent) instead of being recomputed
+    // per read. The query still falls back to a live computation when no
+    // snapshot exists yet, so a fresh DB is never blank.
+    awards: defineTable({
+      tacticalGeniusUserId: v.optional(v.id("users")),
+      tacticalGeniusName: v.optional(v.string()),
+      tacticalGeniusTeam: v.optional(v.string()),
+      tacticalGeniusPoints: v.optional(v.number()),
+      unluckyUserId: v.optional(v.id("users")),
+      unluckyName: v.optional(v.string()),
+      unluckyTeam: v.optional(v.string()),
+      unluckyPoints: v.optional(v.number()),
+      differentialUserId: v.optional(v.id("users")),
+      differentialName: v.optional(v.string()),
+      differentialTeam: v.optional(v.string()),
+      differentialPoints: v.optional(v.number()),
+      playerOfWeekId: v.optional(v.id("players")),
+      playerOfWeekName: v.optional(v.string()),
+      playerOfWeekHouse: v.optional(v.string()),
+      playerOfWeekPoints: v.optional(v.number()),
+      updatedAt: v.optional(v.number()),
     }),
   },
   {

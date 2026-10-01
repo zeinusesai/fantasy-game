@@ -21,6 +21,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { STAGE_LABELS } from "@/lib/fantasy";
+import { cn } from "@/lib/utils";
+import { useHouseName } from "@/components/houses";
 import { toast } from "sonner";
 import { CalendarClock, CheckCircle2, Lock, LockOpen, PartyPopper, Timer } from "lucide-react";
 import { useState } from "react";
@@ -36,12 +38,27 @@ const STAGE_ROWS: Stage[] = ["semifinal1", "semifinal2", "third_place", "final"]
 export function GameweeksTab() {
   const gwStatus = useQuery(api.gameweeks.getGameweekStatus) ?? {
     byStage: {} as Record<string, { deadlineAt: number | null; locked: boolean; settled: boolean }>,
+    byGameweek: [] as Array<{
+      number: number;
+      label: string;
+      shortLabel: string;
+      summary: string;
+      stages: readonly string[];
+      settled: boolean;
+      locked: boolean;
+      closed: boolean;
+      nextDeadlineAt: number | null;
+    }>,
+    activeGameweek: null as number | null,
+    lockReason: null as string | null,
   };
-  const awards = useQuery(api.gameweeks.getTournamentAwards) ?? {
-    tacticalGenius: null,
-    unluckyManager: null,
-    differentialMaster: null,
-    playerOfTheWeek: null,
+  // Live awards engine snapshot — updated automatically after every match.
+  const awards = useQuery(api.awards.getAwards) ?? {
+    tacticalGenius: null as { userId: string; username: string; teamName: string; points: number } | null,
+    unluckyManager: null as { userId: string; username: string; teamName: string; points: number } | null,
+    differentialMaster: null as { userId: string; username: string; teamName: string; points: number } | null,
+    playerOfTheWeek: null as { playerId: string; playerName: string; house: string; points: number } | null,
+    updatedAt: null as number | null,
   };
   const hof = useQuery(api.gameweeks.getHallOfFame) ?? {
     finalized: false,
@@ -54,6 +71,7 @@ export function GameweeksTab() {
   const setStageLock = useMutation(api.gameweeks.setStageLock);
   const settleGameweek = useMutation(api.gameweeks.settleGameweek);
   const finalizeTournament = useMutation(api.gameweeks.finalizeTournament);
+  const houseName = useHouseName();
 
   // Local datetime input per stage (value shown when a deadline exists).
   const [stageInputs, setStageInputs] = useState<Record<string, string>>({});
@@ -136,8 +154,71 @@ export function GameweeksTab() {
   const allSettled =
     STAGE_ROWS.every((s) => gwStatus.byStage[s]?.settled === true);
 
+  // The fixed two-gameweek structure, derived server-side so this tab can
+  // never drift from the deadline engine. Falls back to the static shape.
+  const gameweekCards = gwStatus.byGameweek.length > 0
+    ? gwStatus.byGameweek
+    : [
+        { number: 1, label: "Gameweek 1", shortLabel: "GW1", summary: "Semi-Final 1 and Semi-Final 2", stages: ["semifinal1", "semifinal2"] as readonly string[], settled: false, locked: false, closed: false, nextDeadlineAt: null },
+        { number: 2, label: "Gameweek 2", shortLabel: "GW2", summary: "3rd Place Playoff and the Final", stages: ["third_place", "final"] as readonly string[], settled: false, locked: false, closed: false, nextDeadlineAt: null },
+      ];
+
   return (
     <div className="space-y-6">
+      {/* ── Fixed 2-gameweek structure ── */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {gameweekCards.map((gw) => (
+          <Card
+            key={gw.number}
+            className={cn(
+              "border-border/80",
+              gw.number === gwStatus.activeGameweek && "border-primary/60 ring-1 ring-primary/30",
+              gw.settled && "border-emerald-400/40",
+            )}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display flex flex-wrap items-center gap-2 text-base font-bold uppercase tracking-wide">
+                {gw.shortLabel}
+                <span className="text-muted-foreground text-xs font-normal normal-case">
+                  {gw.summary}
+                </span>
+                {gw.number === gwStatus.activeGameweek && (
+                  <Badge className="bg-primary text-primary-foreground ml-auto border-0 text-[10px]">
+                    ACTIVE
+                  </Badge>
+                )}
+                {gw.settled && (
+                  <Badge variant="outline" className="border-emerald-400/50 text-[10px] text-emerald-300">
+                    SETTLED
+                  </Badge>
+                )}
+                {!gw.settled && gw.closed && (
+                  <Badge variant="outline" className="border-red-400/50 text-[10px] text-red-300">
+                    CLOSED
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription className="text-xs">
+                {gw.nextDeadlineAt !== null ? (
+                  <>
+                    Next deadline:{" "}
+                    <span className="text-foreground font-semibold">
+                      {new Date(gw.nextDeadlineAt).toLocaleString()}
+                    </span>
+                  </>
+                ) : (
+                  "No deadline set — transfers stay open for this gameweek."
+                )}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ))}
+      </div>
+      {gwStatus.lockReason !== null && (
+        <p className="rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200">
+          🔒 Transfers are closed platform-wide: {gwStatus.lockReason}
+        </p>
+      )}
       <Card className="border-border/80">
         <CardHeader>
           <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
@@ -305,8 +386,20 @@ export function GameweeksTab() {
               </span>
             </p>
             <p className="text-sm">
+              <span className="text-muted-foreground">Unlucky Manager:</span>{" "}
+              <span className="font-semibold">
+                {awards.unluckyManager ? `@${awards.unluckyManager.username}` : "TBD"}
+              </span>
+            </p>
+            <p className="text-sm">
+              <span className="text-muted-foreground">Player of the Week:</span>{" "}
+              <span className="font-semibold">
+                {awards.playerOfTheWeek ? awards.playerOfTheWeek.playerName : "TBD"}
+              </span>
+            </p>
+            <p className="text-sm">
               <span className="text-muted-foreground">Champion House:</span>{" "}
-              <span className="font-semibold">{hof.championHouse?.house ?? "TBD"}</span>
+              <span className="font-semibold">{houseName(hof.championHouse?.house)}</span>
             </p>
             <p className="text-sm">
               <span className="text-muted-foreground">Tournament MVP:</span>{" "}

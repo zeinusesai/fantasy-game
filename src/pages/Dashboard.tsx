@@ -11,6 +11,7 @@ import {
   StatsRacesCard,
 } from "@/components/DashboardWidgets";
 import { HouseCrest, PositionChip } from "@/components/houses";
+import { Year12Celebration } from "@/components/Year12Celebration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -281,6 +282,10 @@ export default function Dashboard() {
             </Card>
           </div>
         </div>
+
+        {/* Post-tournament state: "See you in Year 12!" podium + forfeit.
+            Renders nothing while the tournament is live. */}
+        <Year12Celebration />
 
         {/* Hall of Fame — renders only after the Super Admin finalizes. */}
         <HallOfFameCard />

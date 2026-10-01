@@ -201,7 +201,7 @@ export function AppNav({ children }: { children: ReactNode }) {
                 <span className="relative inline-flex size-2 rounded-full bg-red-400" />
               </span>
               <span className="animate-pulse text-[11px] font-black uppercase tracking-[0.18em] text-red-300">
-                🚨 Transfers lock in {deadline.minutesLeft} min{deadline.minutesLeft === 1 ? "" : "s"}
+                🚨 GW{deadline.gameweek ?? 1} transfers lock in {deadline.minutesLeft} min{deadline.minutesLeft === 1 ? "" : "s"}
               </span>
             </div>
           </div>

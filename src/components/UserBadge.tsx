@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useAdminConfig } from "@/hooks/use-admin-config";
 
 /**
  * Custom badge registry. Keys mirror the backend's VALID_BADGES set in
@@ -62,14 +63,39 @@ export const BADGE_TOOLTIPS: Record<string, string> = {
 };
 
 /**
- * Resolve a stored custom badge key → display metadata.
+ * Resolve a stored custom badge key → display metadata, considering BOTH the
+ * built-in table and the Super Admin's live custom badge registry.
  * Fail-safe: "none"/empty/unknown keys return null so callers render nothing
  * instead of crashing on a missing registry entry.
  */
-export function resolveCustomBadge(key: string | null | undefined) {
-  if (!key || key === "none") return null;
-  return BADGE_META[key] ?? null;
+export function resolveCustomBadge(
+  key: string | null | undefined,
+  registry?: Record<string, { emoji: string; label: string; tone: string }> | null,
+) {
+  const userBadge = key ?? "none";
+  if (!userBadge || userBadge === "none") return null;
+  const builtIn = BADGE_META[userBadge];
+  if (builtIn) return builtIn;
+  // Custom badge created by the Super Admin in the Customization tab.
+  const custom = registry?.[userBadge];
+  if (!custom || typeof custom.emoji !== "string") return null;
+  return {
+    label: typeof custom.label === "string" && custom.label.length > 0 ? custom.label : userBadge,
+    glyph: custom.emoji,
+    className: TONE_CLASSES[custom.tone] ?? TONE_CLASSES.amber,
+  };
 }
+
+/** Colour treatment per badge tone (admin-defined or built-in). */
+const TONE_CLASSES: Record<string, string> = {
+  amber: "border-amber-400/50 bg-amber-400/15",
+  orange: "border-orange-500/50 bg-orange-500/15",
+  yellow: "border-yellow-400/60 bg-yellow-400/15",
+  sky: "border-sky-400/50 bg-sky-400/15",
+  cyan: "border-cyan-400/50 bg-cyan-400/15",
+  emerald: "border-emerald-400/50 bg-emerald-400/15",
+  rose: "border-rose-400/50 bg-rose-400/15",
+};
 
 /**
  * Role checkmark: golden verified check + crown for super_admin, standard
@@ -174,7 +200,10 @@ export function UserBadges({
   sizeClass?: string;
   className?: string;
 }) {
-  const badge = resolveCustomBadge(customBadge);
+  // The Super Admin's live badge registry is merged over the built-ins, so a
+  // badge created in the Customization tab renders everywhere immediately.
+  const { badgeRegistry } = useAdminConfig();
+  const badge = resolveCustomBadge(customBadge, badgeRegistry);
   const roleIcon = <RoleBadgeIcon role={role} sizeClass={sizeClass} />;
   if (!roleIcon && !badge) return null;
   // Tooltip copy resolves per-key with a safe fallback to the badge label —
