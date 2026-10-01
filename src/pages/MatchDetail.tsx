@@ -22,6 +22,7 @@ import {
   Users,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
+import { useState } from "react";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type PlayerDoc = Doc<"players">;
@@ -35,6 +36,39 @@ const eventsOf = (m: MatchDoc): TimelineEvent[] =>
 const ratingsOf = (m: MatchDoc): RatingRow[] => m.playerRatings ?? [];
 const homeLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.homeStarters ?? [];
 const awayLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.awayStarters ?? [];
+
+/**
+ * Small circular player photo. Falls back to initials when no custom photo
+ * is set or the URL fails to load — never renders a broken image.
+ */
+function PlayerMiniPhoto({
+  player,
+  sizeClass = "size-7",
+}: {
+  player: { name: string; image?: string | null };
+  sizeClass?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = player.image ?? null;
+  if (!src || failed) {
+    return (
+      <span
+        className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-slate-800 text-[9px] font-bold text-white ring-1 ring-white/25`}
+      >
+        {player.name.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={player.name}
+      className={`${sizeClass} shrink-0 rounded-full object-cover ring-1 ring-white/25`}
+      onError={() => setFailed(true)}
+      loading="lazy"
+    />
+  );
+}
 
 /** FotMob-style rating colour: high = green, mid = neutral, low = red. */
 function RatingPill({ rating }: { rating: number }) {
@@ -332,8 +366,7 @@ function LineupPitch({
         ) : (
           <div className="pitch-bg rounded-xl border border-emerald-900/40 p-3">
             {rows.map((row) => (
-              <div key={row.position} className="flex justify-center gap-2 py-1.5">
-                {docs
+              <div key={row.position} className="flex justify-center gap-2 py-1.5">                  {docs
                   .filter((d) => d.position === row.position)
                   .slice(0, row.slots)
                   .map((d) => (
@@ -341,7 +374,8 @@ function LineupPitch({
                       key={d._id}
                       className="flex w-20 flex-col items-center rounded-lg bg-black/30 px-1 py-1.5"
                     >
-                      <span className="truncate text-[11px] font-semibold text-white">
+                      <PlayerMiniPhoto player={d} sizeClass="size-8" />
+                      <span className="mt-1 truncate text-[11px] font-semibold text-white">
                         {d.name}
                       </span>
                       <span className="text-[9px] font-bold uppercase text-white/60">
@@ -534,6 +568,7 @@ function SquadRatings({
               className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2"
             >
               <div className="flex min-w-0 items-center gap-2">
+                <PlayerMiniPhoto player={player} sizeClass="size-7" />
                 {potmId === String(player._id) && (
                   <Star className="size-3.5 shrink-0 text-amber-400" />
                 )}

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireUser, getPlatformConfig, getSquadForUser } from "./lib";
+import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
 import { formatMoney } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -88,6 +88,95 @@ export const getMostPickedPlayer = query({
   },
 });
 
+/**
+ * Ownership counts for the draft market: how many active squads picked each
+ * player. Returns a flat map keyed by player id (as string) plus the total
+ * number of squads — the UI computes percentages defensively (0 squads →
+ * 0% everywhere, never a division error).
+ */
+export const getPickCounts = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      const counts: Record<string, number> = {};
+      let totalPicks = 0;
+      for (const squad of squads) {
+        for (const pid of squad.playerIds ?? []) {
+          const key = String(pid);
+          counts[key] = (counts[key] ?? 0) + 1;
+          totalPicks += 1;
+        }
+      }
+      return {
+        totalSquads: squads.length,
+        counts,
+        totalPicks,
+      };
+    } catch {
+      // Never bubble a storage hiccup into a rejected query.
+      return { totalSquads: 0, counts: {} as Record<string, number>, totalPicks: 0 };
+    }
+  },
+});
+
+/**
+ * Public rival-squad view for the Leaderboard inspector: the manager's
+ * 7-a-side lineup, captain, points breakdown and remaining budget.
+ * Null-safe: unknown/deleted user or missing squad returns null so the
+ * drawer renders a clean empty state instead of throwing.
+ */
+export const getSquadByUserId = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    try {
+      const user = await ctx.db.get(userId);
+      if (!user) return null;
+      const squad = await getSquadForUser(ctx, userId);
+      if (!squad) return null;
+
+      const players = (await Promise.all(squad.playerIds.map((id) => ctx.db.get(id)))).filter(
+        (p): p is NonNullable<typeof p> => p !== null,
+      );
+      const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
+
+      // Points breakdown via the shared leaderboard aggregation (safe at 0 matches).
+      const rows = await getLeaderboardRows(ctx);
+      const mine = rows.find((r) => r.userId === userId);
+      const rank = mine ? rows.findIndex((r) => r.userId === userId) + 1 : null;
+
+      // Budget: custom override → stored budget → platform default.
+      const { budget: platformBudget } = await getPlatformConfig(ctx);
+      const effectiveBudget =
+        typeof user.customBudget === "number"
+          ? user.customBudget
+          : typeof user.budget === "number"
+            ? user.budget
+            : platformBudget;
+
+      return {
+        squadId: squad._id,
+        userId: user._id,
+        username: user.username ?? "?",
+        teamName: user.teamName ?? "Unnamed team",
+        avatar: user.image ?? null,
+        players,
+        captainId: captain ? squad.captainId : null,
+        captainName: captain?.name ?? null,
+        totalSpent: squad.totalSpent,
+        effectiveBudget,
+        remainingBudget: Math.max(effectiveBudget - squad.totalSpent, 0),
+        totalPoints: mine?.total ?? 0,
+        lastMatchPoints: mine?.lastMatch ?? 0,
+        rank,
+        managerCount: rows.length,
+      };
+    } catch {
+      return null;
+    }
+  },
+});
+
 /** Points the signed-in user's squad earned from one match (null-safe). */
 export const getSquadPointsByMatch = query({
   args: { matchId: v.id("matches") },
@@ -162,7 +251,7 @@ export const saveSquad = mutation({
         `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(budget)}.`,
       );
     }
-    const myBudget = user.budget ?? budget;
+    const myBudget = user.customBudget ?? user.budget ?? budget;
     if (totalSpent > myBudget) {
       throw new Error(
         `Squad exceeds your available budget: ${formatMoney(myBudget)}.`,

@@ -49,10 +49,79 @@ import type { House, Position, RequestStatus, Stage } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type PriceRequest = Doc<"priceRequests"> & { avatar: string | null };
+
+// ── Shared safe-avatar + player-photo helpers ───────────────────────────
+
+/**
+ * Manager avatar with layered fallbacks: custom upload URL → preset SVG →
+ * initials. Broken URLs are hidden via onError so the initials disc always
+ * renders — an image can never crash the table.
+ */
+function AdminAvatar({
+  username,
+  image,
+  profilePic,
+  sizeClass = "size-7",
+}: {
+  username: string | null;
+  image?: string | null;
+  profilePic?: string | null;
+  sizeClass?: string;
+}) {
+  const stored = image || profilePic || null;
+  const src =
+    stored && (stored.startsWith("http") || stored.startsWith("data:"))
+      ? stored
+      : avatarPresetUrl(stored);
+  return (
+    <Avatar className={sizeClass}>
+      <AvatarImage
+        src={src ?? undefined}
+        alt={username ?? "avatar"}
+        onError={(e) => {
+          (e.target as HTMLImageElement).style.visibility = "hidden";
+        }}
+      />
+      <AvatarFallback className="bg-primary/20 text-primary text-[10px] font-bold">
+        {(username ?? "?").slice(0, 2).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+/** Small player photo with initials fallback (used in the roster table). */
+function PlayerCellPhoto({
+  name,
+  image,
+}: {
+  name: string;
+  image?: string | null;
+}) {
+  const src = typeof image === "string" && image.length > 0 ? image : null;
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[9px] font-bold text-muted-foreground ring-1 ring-border">
+        {name.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={name}
+      className="size-7 shrink-0 rounded-full object-cover ring-1 ring-border"
+      onError={() => setFailed(true)}
+      loading="lazy"
+    />
+  );
+}
 import { toast } from "sonner";
 import {
+  AlertTriangle,
   CheckCircle2,
   Crown,
+  ImagePlus,
   Inbox,
   KeyRound,
   Loader2,
@@ -66,6 +135,7 @@ import {
   Trash2,
   UserCog,
   Users2,
+  Wallet,
   Wrench,
   XCircle,
 } from "lucide-react";
@@ -229,6 +299,7 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
   const addPlayer = useMutation(api.players.addPlayer);
   const updatePlayer = useMutation(api.players.updatePlayer);
   const deletePlayer = useMutation(api.players.deletePlayer);
+  const setPlayerImage = useMutation(api.players.setPlayerImage);
 
   const [name, setName] = useState("");
   const [house, setHouse] = useState<House>("Fire");
@@ -240,6 +311,48 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
   const [editHouse, setEditHouse] = useState<House>("Fire");
   const [editPosition, setEditPosition] = useState<Position>("MID");
   const [editPrice, setEditPrice] = useState("");
+
+  // ── Player photo management (Super Admin) ──
+  const [imgFor, setImgFor] = useState<Doc<"players"> | null>(null);
+  const [imgUrl, setImgUrl] = useState("");
+  const [imgBusy, setImgBusy] = useState(false);
+
+  const startImageEdit = (p: Doc<"players">) => {
+    setImgFor(p);
+    setImgUrl(p.image ?? "");
+  };
+
+  const handleSaveImage = async () => {
+    if (!imgFor) return;
+    setImgBusy(true);
+    try {
+      await setPlayerImage({ playerId: imgFor._id, image: imgUrl.trim() });
+      toast.success(
+        imgUrl.trim()
+          ? `Photo updated for ${imgFor.name}.`
+          : `Photo cleared for ${imgFor.name}.`,
+      );
+      setImgFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the player photo.");
+    } finally {
+      setImgBusy(false);
+    }
+  };
+
+  const handleRemoveImage = async () => {
+    if (!imgFor) return;
+    setImgBusy(true);
+    try {
+      await setPlayerImage({ playerId: imgFor._id, image: "" });
+      toast.success(`Photo removed for ${imgFor.name}.`);
+      setImgFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not remove the photo.");
+    } finally {
+      setImgBusy(false);
+    }
+  };
 
   const handleAdd = async () => {
     const parsed = parseMoneyInput(price);
@@ -457,7 +570,12 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                       </TableRow>
                     ) : (
                       <TableRow key={p._id}>
-                        <TableCell className="font-semibold">{p.name}</TableCell>
+                        <TableCell className="font-semibold">
+                          <span className="flex items-center gap-2">
+                            <PlayerCellPhoto name={p.name} image={p.image} />
+                            {p.name}
+                          </span>
+                        </TableCell>
                         <TableCell><HouseBadge house={p.house} /></TableCell>
                         <TableCell><PositionChip position={p.position} /></TableCell>
                         <TableCell className="text-right font-score font-bold">
@@ -465,6 +583,14 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => startImageEdit(p)}
+                              title={p.image ? "Change player photo" : "Set player photo"}
+                            >
+                              <ImagePlus className="size-3.5" />
+                            </Button>
                             <Button size="sm" variant="ghost" onClick={() => startEdit(p)}>
                               <Pencil className="size-3.5" />
                             </Button>
@@ -489,11 +615,87 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Player photo dialog — set or clear a custom image URL */}
+      <Dialog
+        open={imgFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setImgFor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ImagePlus className="text-primary size-4" /> Player photo
+            </DialogTitle>
+            <DialogDescription>
+              Set a custom photo for{' '}
+              <span className="text-foreground font-semibold">{imgFor?.name ?? "this player"}</span>.
+              It appears on pitch cards, the draft market and match lineups.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              {(() => {
+                const trimmed = imgUrl.trim();
+                if (!trimmed) {
+                  return (
+                    <span className="flex size-14 items-center justify-center rounded-full bg-secondary text-sm font-bold text-muted-foreground ring-1 ring-border">
+                      {(imgFor?.name ?? "?").slice(0, 2).toUpperCase()}
+                    </span>
+                  );
+                }
+                return (
+                  <img
+                    src={trimmed}
+                    alt="Preview"
+                    className="size-14 rounded-full object-cover ring-1 ring-border"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
+                );
+              })()}
+              <div className="grid flex-1 gap-1.5">
+                <Label htmlFor="player-image">Image URL</Label>
+                <Input
+                  id="player-image"
+                  value={imgUrl}
+                  onChange={(e) => setImgUrl(e.target.value)}
+                  placeholder="https://… or data:image/…"
+                />
+              </div>
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Paste a direct image link (http/https) or a data URL. Leave empty and
+              press Save to clear the photo.
+            </p>
+          </div>
+          <DialogFooter>
+            {imgFor?.image ? (
+              <Button variant="outline" onClick={handleRemoveImage} disabled={imgBusy}>
+                <Trash2 className="mr-1.5 size-3.5" /> Remove
+              </Button>
+            ) : null}
+            <Button variant="ghost" onClick={() => setImgFor(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveImage} disabled={imgBusy}>
+              {imgBusy ? (
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+              ) : (
+                <Save className="mr-1.5 size-4" />
+              )}
+              Save photo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-// ── Matches tab (super admin only) ───────────────────────────────────────
+// ── Matches tab (super admin only) ─────────────────────────────────────────
 
 type LineDraft = {
   playerId: Id<"players">;
@@ -908,10 +1110,22 @@ function UsersTab() {
   // `?? []`: undefined (still loading) and null-safe results both render as an
   // empty list instead of crashing on `.map`.
   const usersResult = useQuery(api.usersAdmin.listUsers);
-  const users = usersResult ?? [];
+  const users = (usersResult ?? []) as Array<{
+    _id: Id<"users">;
+    username: string | null;
+    teamName: string | null;
+    image: string | null;
+    profilePic: string | null;
+    role: string | null;
+    budget: number | null;
+    customBudget: number | null;
+  }>;
   const usersLoading = usersResult === undefined;
   const updateUser = useMutation(api.usersAdmin.updateUser);
   const requestPasswordReset = useMutation(api.usersAdmin.requestPasswordReset);
+  const setUserBudget = useMutation(api.usersAdmin.setUserBudget);
+  const deleteUser = useMutation(api.usersAdmin.deleteUserWithCascade);
+  const { user: me } = useAuth();
 
   const [editingId, setEditingId] = useState<Id<"users"> | null>(null);
   const [editTeam, setEditTeam] = useState("");
@@ -919,6 +1133,57 @@ function UsersTab() {
   const [resetFor, setResetFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // ── Budget override (Super Admin) ──
+  const [budgetFor, setBudgetFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
+  const [budgetInput, setBudgetInput] = useState("");
+  const [budgetBusy, setBudgetBusy] = useState(false);
+
+  // ── Delete user with cascade (Super Admin) ──
+  const [deleteFor, setDeleteFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const openBudget = (u: { _id: Id<"users">; username: string | null; budget: number | null; customBudget: number | null }) => {
+    setBudgetFor({ id: u._id, username: u.username });
+    const current = u.customBudget ?? u.budget;
+    setBudgetInput(current != null ? formatMoney(current) : "");
+  };
+
+  const handleSetBudget = async () => {
+    if (!budgetFor) return;
+    // Defensive numeric parse — nothing non-numeric ever reaches the backend.
+    const parsed = parseMoneyInput(budgetInput);
+    if (parsed === null || parsed < 0) {
+      toast.error('Invalid budget — use e.g. "60m", "75m" or "75000000".');
+      return;
+    }
+    setBudgetBusy(true);
+    try {
+      await setUserBudget({ userId: budgetFor.id, budget: parsed });
+      toast.success(`Budget for @${budgetFor.username ?? "user"} set to ${formatMoney(parsed)}.`);
+      setBudgetFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not set the budget.");
+    } finally {
+      setBudgetBusy(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteFor) return;
+    setDeleteBusy(true);
+    try {
+      const res = await deleteUser({ userId: deleteFor.id });
+      toast.success(
+        `@${deleteFor.username ?? "user"} deleted${res?.squadDeleted ? " along with their squad" : ""}.`,
+      );
+      setDeleteFor(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete the user.");
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   const startEdit = (u: { _id: Id<"users">; teamName: string | null; budget: number | null }) => {
     setEditingId(u._id);
@@ -999,7 +1264,12 @@ function UsersTab() {
               {users.map((u) =>
                 editingId === u._id ? (
                   <TableRow key={u._id}>
-                    <TableCell className="font-semibold">@{u.username}</TableCell>
+                    <TableCell className="font-semibold">
+                      <span className="flex items-center gap-2">
+                        <AdminAvatar username={u.username} image={u.image} profilePic={u.profilePic} />
+                        @{u.username}
+                      </span>
+                    </TableCell>
                     <TableCell>
                       <Input value={editTeam} onChange={(e) => setEditTeam(e.target.value)} className="h-8" />
                     </TableCell>
@@ -1025,7 +1295,10 @@ function UsersTab() {
                 ) : (
                   <TableRow key={u._id}>
                     <TableCell>
-                      <span className="font-semibold">@{u.username}</span>
+                      <span className="flex items-center gap-2">
+                        <AdminAvatar username={u.username} image={u.image} profilePic={u.profilePic} />
+                        <span className="font-semibold">@{u.username}</span>
+                      </span>
                     </TableCell>
                     <TableCell>{u.teamName ?? "—"}</TableCell>
                     <TableCell>
@@ -1042,7 +1315,18 @@ function UsersTab() {
                       )}
                     </TableCell>
                     <TableCell className="text-right font-score font-bold">
-                      {u.budget != null ? formatMoney(u.budget) : "—"}
+                      {u.budget != null ? (
+                        <span className="inline-flex items-center gap-1">
+                          {formatMoney(u.budget)}
+                          {u.customBudget != null && (
+                            <Badge variant="outline" className="px-1 py-0 text-[9px] uppercase">
+                              custom
+                            </Badge>
+                          )}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -1052,11 +1336,30 @@ function UsersTab() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          title="Budget override"
+                          onClick={() => openBudget(u)}
+                        >
+                          <Wallet className="size-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           title="Reset password"
                           onClick={() => setResetFor({ id: u._id, username: u.username })}
                         >
                           <KeyRound className="size-3.5" />
                         </Button>
+                        {u._id !== me?._id && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            title="Delete user"
+                            onClick={() => setDeleteFor({ id: u._id, username: u.username })}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1092,6 +1395,91 @@ function UsersTab() {
             </p>
           </div>
         )}
+
+        {/* Budget override dialog */}
+        <Dialog
+          open={budgetFor !== null}
+          onOpenChange={(open) => {
+            if (!open) setBudgetFor(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Wallet className="text-primary size-4" /> Budget override
+              </DialogTitle>
+              <DialogDescription>
+                Independently set{' '}
+                <span className="text-foreground font-semibold">@{budgetFor?.username ?? "user"}</span>'s
+                budget (e.g. $60m or $75m) while the global default stays unchanged. Squad
+                validation uses this value immediately.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-1.5">
+              <Label htmlFor="override-budget">New budget</Label>
+              <Input
+                id="override-budget"
+                value={budgetInput}
+                onChange={(e) => setBudgetInput(e.target.value)}
+                placeholder='e.g. "60m", "75m" or "75000000"'
+                autoFocus
+              />
+              {budgetInput.trim() !== "" && parseMoneyInput(budgetInput) === null && (
+                <p className="text-destructive text-xs">
+                  Invalid amount — use 60m, 75m, 850k or a plain number.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setBudgetFor(null)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSetBudget} disabled={budgetBusy || parseMoneyInput(budgetInput) === null}>
+                {budgetBusy ? (
+                  <Loader2 className="mr-1.5 size-4 animate-spin" />
+                ) : (
+                  <Wallet className="mr-1.5 size-4" />
+                )}
+                Set budget
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete-user confirmation (cascade warning) */}
+        <Dialog
+          open={deleteFor !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteFor(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="size-4" /> Delete user?
+              </DialogTitle>
+              <DialogDescription>
+                This permanently deletes{' '}
+                <span className="text-foreground font-semibold">@{deleteFor?.username ?? "user"}</span>{' '}
+                and everything tied to them: sign-in credentials, their fantasy squad,
+                per-match score rows and price requests. This cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setDeleteFor(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={handleDeleteUser} disabled={deleteBusy}>
+                {deleteBusy ? (
+                  <Loader2 className="mr-1.5 size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-1.5 size-4" />
+                )}
+                Delete permanently
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
@@ -1604,7 +1992,12 @@ function RolesTab() {
             <TableBody>
               {users.map((u) => (
                 <TableRow key={u._id}>
-                  <TableCell className="font-semibold">@{u.username ?? "—"}</TableCell>
+                  <TableCell>
+                    <span className="flex items-center gap-2">
+                      <AdminAvatar username={u.username} image={u.image} />
+                      <span className="font-semibold">@{u.username ?? "—"}</span>
+                    </span>
+                  </TableCell>
                   <TableCell>{u.teamName ?? "—"}</TableCell>
                   <TableCell>
                     {u.role === "super_admin" ? (

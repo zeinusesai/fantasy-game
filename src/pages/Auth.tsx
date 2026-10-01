@@ -103,7 +103,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               <Swords className="size-5" />
             </span>
             <span className="font-display text-2xl font-bold tracking-wide">
-              HOUSE<span className="text-primary">CUP</span>
+              YEAR 11 <span className="text-primary">INTERHOUSE</span>
             </span>
           </button>
         </div>
@@ -216,6 +216,11 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                                 width={44}
                                 height={44}
                                 className="size-11 rounded-full"
+                                onError={(e) => {
+                                  // Presets are inline SVGs; this is pure
+                                  // defense — hide a broken image, never crash.
+                                  (e.target as HTMLImageElement).style.visibility = "hidden";
+                                }}
                               />
                             ) : (
                               <span className="text-xl">{preset.emoji ?? "⚽"}</span>

@@ -67,6 +67,7 @@ export const listUsers = query({
         profilePic: u.profilePic ?? null,
         role: u.role ?? null,
         budget: u.budget ?? null,
+        customBudget: u.customBudget ?? null,
       }));
     } catch {
       // Never bubble storage errors into a rejected query.
@@ -224,6 +225,83 @@ export const updateUser = mutation({
       patch.budget = budget;
     }
     await ctx.db.patch(userId, patch);
+  },
+});
+
+/**
+ * Super Admin only: independently override one manager's budget (e.g. $60m
+ * or $75m while the global default stays at $65m). Writes both the canonical
+ * `customBudget` override and the legacy `budget` field so older budget
+ * checks (squad validation) agree. Strictly parses/validates the number.
+ */
+export const setUserBudget = mutation({
+  args: { userId: v.id("users"), budget: v.number() },
+  handler: async (ctx, { userId, budget }) => {
+    await requireSuperAdmin(ctx);
+
+    // Defensive parsing — reject NaN/Infinity/negatives before touching the DB.
+    const value = Number(budget);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error("Budget must be a non-negative number, e.g. 60000000 for $60m.");
+    }
+    const target = await ctx.db.get(userId);
+    if (!target) throw new Error("User not found.");
+
+    const rounded = Math.round(value);
+    try {
+      await ctx.db.patch(userId, { budget: rounded, customBudget: rounded });
+      return { budget: rounded };
+    } catch {
+      throw new Error("Could not set the budget — please try again.");
+    }
+  },
+});
+
+/**
+ * Super Admin only: permanently delete a user account and cascade-delete
+ * everything tied to it — auth accounts, their fantasy squad, per-match
+ * score rows and price requests — so no orphaned records remain.
+ * Guards: you cannot delete yourself, and the last Super Admin is protected.
+ */
+export const deleteUserWithCascade = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const me = await requireSuperAdmin(ctx);
+
+    const target = await ctx.db.get(userId);
+    if (!target) throw new Error("User not found — they may already be deleted.");
+    if (target._id === me._id) {
+      throw new Error("You cannot delete your own account while signed in.");
+    }
+
+    // Guard: never remove the last super admin.
+    if (target.role === "super_admin") {
+      const supers = (await ctx.db.query("users").collect()).filter(
+        (u) => u.role === "super_admin",
+      );
+      if (supers.length <= 1) {
+        throw new Error(
+          "Cannot delete the last Super Admin — promote another admin first.",
+        );
+      }
+    }
+
+    // Explicit annotation breaks the circular type inference that TS7022
+    // would otherwise hit through ctx.runMutation.
+    const result: {
+      accounts: number;
+      squadDeleted: boolean;
+      scoresDeleted: number;
+      requestsDeleted: number;
+    } = await ctx.runMutation(internal.lib.deleteUserAndAccount, {
+      userId,
+    });
+    return {
+      deleted: true as const,
+      squadDeleted: result?.squadDeleted ?? false,
+      scoresDeleted: result?.scoresDeleted ?? 0,
+      requestsDeleted: result?.requestsDeleted ?? 0,
+    };
   },
 });
 

@@ -54,7 +54,11 @@ export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   return user;
 }
 
-/** Internal: deletes a user and their password auth account (admin tooling). */
+/**
+ * Internal: deletes a user and everything tied to them — password auth
+ * accounts, their fantasy squad, per-match score rows and price requests —
+ * so no orphaned records are left behind (admin tooling).
+ */
 export const deleteUserAndAccount = internalMutation({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
@@ -65,8 +69,32 @@ export const deleteUserAndAccount = internalMutation({
       )
       .collect();
     for (const a of accounts) await ctx.db.delete(a._id);
+
+    // Cascade: the user's squad (if any) — prevents orphaned squads.
+    const squad = await getSquadForUser(ctx, userId);
+    if (squad) await ctx.db.delete(squad._id);
+
+    // Cascade: per-match fantasy score rows belonging to the user.
+    const scores = await ctx.db
+      .query("matchScores")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const s of scores) await ctx.db.delete(s._id);
+
+    // Cascade: price requests submitted by the user.
+    const requests = await ctx.db
+      .query("priceRequests")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    for (const r of requests) await ctx.db.delete(r._id);
+
     await ctx.db.delete(userId);
-    return { accounts: accounts.length };
+    return {
+      accounts: accounts.length,
+      squadDeleted: squad !== null,
+      scoresDeleted: scores.length,
+      requestsDeleted: requests.length,
+    };
   },
 });
 

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { requireAdmin } from "./lib";
+import { requireAdmin, requireSuperAdmin } from "./lib";
 import {
   houseValidator,
   positionValidator,
@@ -23,6 +23,44 @@ export const listPlayers = query({
 export const getPlayer = query({
   args: { playerId: v.id("players") },
   handler: async (ctx, { playerId }) => ctx.db.get(playerId),
+});
+
+/**
+ * Super Admin only: set or clear a player's custom photo URL. Shown on pitch
+ * cards, the draft market and match lineups. Passing an empty string clears
+ * the image (the field is removed server-side).
+ */
+export const setPlayerImage = mutation({
+  args: { playerId: v.id("players"), image: v.string() },
+  handler: async (ctx, { playerId, image }) => {
+    await requireSuperAdmin(ctx);
+
+    const player = await ctx.db.get(playerId);
+    if (!player) throw new Error("Player not found — it may have already been removed.");
+
+    const trimmed = typeof image === "string" ? image.trim() : "";
+    if (trimmed === "") {
+      // Clearing: patching with undefined removes the field.
+      await ctx.db.patch(playerId, { image: undefined });
+      return { image: null };
+    }
+
+    if (trimmed.length > 2_000_000) {
+      throw new Error("Image URL/data is too large — use an image link under ~1.5MB.");
+    }
+    const isHttp = /^https?:\/\//i.test(trimmed);
+    const isData = /^data:image\//i.test(trimmed);
+    if (!isHttp && !isData) {
+      throw new Error('Invalid image — paste an http(s):// or data:image/… URL.');
+    }
+
+    try {
+      await ctx.db.patch(playerId, { image: trimmed });
+      return { image: trimmed };
+    } catch {
+      throw new Error("Could not save the player image — please try again.");
+    }
+  },
 });
 
 export const addPlayer = mutation({

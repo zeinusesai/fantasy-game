@@ -35,7 +35,44 @@ import type { House, Position } from "@/convex/schema";
 
 const FORMATION: Record<Position, number> = { GK: 1, DEF: 2, MID: 2, FWD: 2 };
 
-type PlayerRow = { _id: Id<"players">; name: string; price: number };
+type PlayerRow = {
+  _id: Id<"players">;
+  name: string;
+  price: number;
+  house: House;
+  position: Position;
+  image?: string | null;
+};
+
+/** Small circular player photo with a graceful initials fallback. */
+function MarketPhoto({
+  player,
+  sizeClass = "size-9",
+}: {
+  player: { name: string; position: Position; image?: string | null };
+  sizeClass?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = player.image ?? null;
+  if (!src || failed) {
+    return (
+      <span
+        className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-slate-900/85 text-[10px] font-bold text-white ring-1 ring-white/30`}
+      >
+        {player.name.slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={player.name}
+      className={`${sizeClass} shrink-0 rounded-full object-cover ring-1 ring-white/30`}
+      onError={() => setFailed(true)}
+      loading="lazy"
+    />
+  );
+}
 
 export default function SquadBuilder() {
   const playersResult = useQuery(api.players.listPlayers);
@@ -43,6 +80,16 @@ export default function SquadBuilder() {
   const config = useQuery(api.config.getConfig);
   const mostPickedResult = useQuery(api.squads.getMostPickedPlayer);
   const saveSquad = useMutation(api.squads.saveSquad);
+
+  // Ownership aggregation — defaults while loading / at 0 squads: every
+  // player shows "Picked by 0 managers (0%)" instead of NaN or undefined.
+  const pickData = useQuery(api.squads.getPickCounts);
+  const ownershipFor = (id: Id<"players">) => {
+    const count = pickData?.counts[String(id)] ?? 0;
+    const totalSquads = pickData?.totalSquads ?? 0;
+    const pct = totalSquads > 0 ? Math.round((count / totalSquads) * 100) : 0;
+    return { count, totalSquads, pct };
+  };
 
   // Popularity badge data — null-safe: no squads yet → no badge rendered.
   const mostPicked = mostPickedResult ?? null;
@@ -75,6 +122,9 @@ export default function SquadBuilder() {
   const [reqPrice, setReqPrice] = useState("");
   const [reqReason, setReqReason] = useState("");
   const [reqBusy, setReqBusy] = useState(false);
+
+  // ── Player details modal state ──
+  const [detailFor, setDetailFor] = useState<PlayerRow | null>(null);
 
   const parsedReqPrice = parseMoneyInput(reqPrice);
   const reqValid =
@@ -447,6 +497,7 @@ export default function SquadBuilder() {
                     const canAfford = p.price <= remaining;
                     const affordable = isSelected || canAfford;
                     const pendingReq = pendingByPlayer.get(p._id);
+                    const ownership = ownershipFor(p._id);
 
                     return (
                       <div key={p._id} className="flex h-full items-stretch gap-2">
@@ -471,38 +522,56 @@ export default function SquadBuilder() {
                                 : "border-border/40 bg-secondary/20 opacity-50"
                           }`}
                         >
-                          <div className="min-w-0">
-                            <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
-                              {isSelected && <Check className="text-primary size-3.5 shrink-0" />}
-                              {p.name}
-                            </p>
-                            <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
-                              {p.house} <PositionChip position={p.position} />
-                            </p>
-                            {pendingReq && (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
-                                <Coins className="size-3" /> price review pending
-                              </span>
-                            )}
-                            {mostPicked && String(mostPicked.playerId) === String(p._id) && (
-                              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-orange-400/50 bg-orange-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200">
-                                🔥 MOST SELECTED · {mostPicked.percentage}%
-                              </span>
-                            )}
+                          <div className="flex min-w-0 items-start gap-2">
+                            <MarketPhoto player={p} />
+                            <div className="min-w-0">
+                              <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                                {isSelected && <Check className="text-primary size-3.5 shrink-0" />}
+                                {p.name}
+                              </p>
+                              <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+                                {p.house} <PositionChip position={p.position} />
+                              </p>
+                              {/* Ownership: exact pick count + % — safe at 0 squads. */}
+                              <p className="text-muted-foreground/80 mt-1 text-[11px]">
+                                Picked by {ownership.count} manager{ownership.count === 1 ? "" : "s"} ({ownership.pct}%)
+                              </p>
+                              {pendingReq && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
+                                  <Coins className="size-3" /> price review pending
+                                </span>
+                              )}
+                              {mostPicked && String(mostPicked.playerId) === String(p._id) && (
+                                <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-orange-400/50 bg-orange-500/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200">
+                                  🔥 MOST SELECTED · {mostPicked.percentage}%
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <span className="font-score shrink-0 text-sm font-bold">
                             {formatMoney(p.price)}
                           </span>
                         </button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-9 shrink-0 self-center px-0"
-                          title="Request price change"
-                          onClick={() => openRequest(p)}
-                        >
-                          <Coins className="size-4" />
-                        </Button>
+                        <div className="flex shrink-0 flex-col items-center justify-center gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-9 px-0"
+                            title="Player details"
+                            onClick={() => setDetailFor(p)}
+                          >
+                            <Info className="size-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-9 px-0"
+                            title="Request price change"
+                            onClick={() => openRequest(p)}
+                          >
+                            <Coins className="size-4" />
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
@@ -590,6 +659,79 @@ export default function SquadBuilder() {
               Send request
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Player details modal — ownership, price, photo, quick pick/remove */}
+      <Dialog
+        open={detailFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailFor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              {detailFor && <MarketPhoto player={detailFor} sizeClass="size-10" />}
+              <span className="truncate">{detailFor?.name ?? "Player"}</span>
+            </DialogTitle>
+            <DialogDescription>
+              {detailFor && (
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <HouseBadge house={detailFor.house} />
+                  <PositionChip position={detailFor.position} />
+                  <span className="font-score text-sm font-bold text-foreground">
+                    {formatMoney(detailFor.price)}
+                  </span>
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {detailFor && (() => {
+            const ownership = ownershipFor(detailFor._id);
+            const isMine = selected.includes(detailFor._id);
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl border border-border/70 bg-secondary/40 p-2.5">
+                    <p className="font-score text-xl font-bold">{ownership.count}</p>
+                    <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+                      managers picked
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/70 bg-secondary/40 p-2.5">
+                    <p className="font-score text-xl font-bold">{ownership.pct}%</p>
+                    <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+                      ownership
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/70 bg-secondary/40 p-2.5">
+                    <p className="font-score text-xl font-bold">{ownership.totalSquads}</p>
+                    <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+                      total squads
+                    </p>
+                  </div>
+                </div>
+                <p className="text-muted-foreground text-xs">
+                  {ownership.totalSquads === 0
+                    ? "No squads have been drafted yet — you'd be the first."
+                    : ownership.count === 0
+                      ? "Unpicked so far — a differential no rival owns."
+                      : `${ownership.count} of ${ownership.totalSquads} managers have ${detailFor.name} in their seven.`}
+                </p>
+                <Button
+                  className="w-full"
+                  variant={isMine ? "outline" : "default"}
+                  onClick={() => {
+                    toggle(detailFor._id);
+                    setDetailFor(null);
+                  }}
+                >
+                  {isMine ? "Remove from my squad" : "Add to my squad"}
+                </Button>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </AppNav>

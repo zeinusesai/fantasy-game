@@ -79,6 +79,7 @@ export default function Profile() {
         name: p.name,
         position: p.position,
         house: p.house,
+        image: p.image ?? null,
         isCaptain: mySquad?.captainId === p._id,
       });
       return acc;
@@ -88,6 +89,7 @@ export default function Profile() {
       name: string;
       position: string;
       house: string;
+      image: string | null;
       isCaptain: boolean;
     }>>,
   );

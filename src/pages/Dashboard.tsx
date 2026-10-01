@@ -76,6 +76,7 @@ export default function Dashboard() {
         name: p.name,
         position: p.position,
         house: p.house,
+        image: p.image ?? null,
         isCaptain: mySquad?.captainId === p._id,
       });
       return acc;
@@ -85,6 +86,7 @@ export default function Dashboard() {
       name: string;
       position: string;
       house: string;
+      image: string | null;
       isCaptain: boolean;
     }>>,
   );

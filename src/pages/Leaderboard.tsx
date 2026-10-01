@@ -2,9 +2,18 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
+import { PitchView, type PitchPlayer } from "@/components/PitchView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -13,10 +22,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import { BarChart3, Crown, Flame, Loader2, Medal, Star, Trophy } from "lucide-react";
+import type { Id } from "@/convex/_generated/dataModel";
+import {
+  BarChart3,
+  Crown,
+  Eye,
+  Flame,
+  Loader2,
+  Medal,
+  Star,
+  Trophy,
+  Wallet,
+} from "lucide-react";
+import { useState } from "react";
 
 export default function Leaderboard() {
   const { user } = useAuth();
@@ -26,13 +48,17 @@ export default function Leaderboard() {
   const loading = leaderboardResult === undefined;
   const medalStyles = ["text-amber-300", "text-slate-300", "text-orange-300"];
 
+  // Rival Squad Inspector — clicking a team opens the drawer for that manager.
+  const [inspectUserId, setInspectUserId] = useState<Id<"users"> | null>(null);
+
   return (
     <AppNav>
       <div className="space-y-6">
         <div>
           <h1 className="font-display text-3xl font-bold tracking-tight">Global leaderboard</h1>
           <p className="text-muted-foreground text-sm">
-            Every manager ranked by total fantasy points across the tournament.
+            Every manager ranked by total fantasy points across the tournament. Click a team
+            to inspect their squad.
           </p>
         </div>
 
@@ -111,15 +137,21 @@ export default function Leaderboard() {
                           </Avatar>
                         </TableCell>
                         <TableCell>
-                          <span className="flex flex-wrap items-center gap-2 font-semibold">
+                          {/* Clickable team name → Rival Squad Inspector drawer */}
+                          <button
+                            onClick={() => setInspectUserId(row.userId)}
+                            title={`Inspect ${row.teamName}'s squad`}
+                            className="group flex flex-wrap items-center gap-1.5 text-left font-semibold transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none"
+                          >
                             {row.teamName}
+                            <Eye className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
                             {row.rank === 1 && row.totalPoints > 0 && (
                               <Badge className="gap-1 whitespace-normal border border-amber-400/40 bg-amber-400/15 py-1 text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
                                 <Trophy className="size-3 shrink-0" />
                                 CURRENTLY WINNING: 1x Premium Grade Plastic Medal (Priceless)
                               </Badge>
                             )}
-                          </span>
+                          </button>
                         </TableCell>
                         <TableCell className="text-muted-foreground">@{row.username}</TableCell>
                         <TableCell>
@@ -153,6 +185,158 @@ export default function Leaderboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Rival Squad Inspector — mounted only while a row is open so the
+          underlying query stays skipped for closed rows. */}
+      {inspectUserId && (
+        <RivalInspector
+          userId={inspectUserId}
+          onClose={() => setInspectUserId(null)}
+        />
+      )}
     </AppNav>
+  );
+}
+
+// ── Rival Squad Inspector drawer ─────────────────────────────────────────
+
+function RivalInspector({
+  userId,
+  onClose,
+}: {
+  userId: Id<"users">;
+  onClose: () => void;
+}) {
+  // Safe fallbacks: undefined = still loading, null = no squad (clean empty
+  // state) — never crashes on a missing/deleted rival.
+  const result = useQuery(api.squads.getSquadByUserId, { userId });
+  const rival = result ?? null;
+  const loading = result === undefined;
+
+  const squadPlayers = rival?.players ?? [];
+  const byPosition = squadPlayers.reduce(
+    (acc, p) => {
+      (acc[p.position] ??= []).push({
+        playerId: p._id,
+        name: p.name,
+        position: p.position,
+        house: p.house,
+        image: p.image ?? null,
+        isCaptain: rival?.captainId === p._id,
+      });
+      return acc;
+    },
+    {} as Record<string, PitchPlayer[]>,
+  );
+
+  const avatar =
+    rival?.avatar && (rival.avatar.startsWith("http") || rival.avatar.startsWith("data:"))
+      ? rival.avatar
+      : avatarPresetUrl(rival?.avatar ?? null);
+
+  return (
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent side="right" className="w-full overflow-y-auto border-l sm:max-w-md">
+        <SheetHeader className="pb-0">
+          <SheetTitle className="flex items-center gap-2.5">
+            <Avatar className="size-9">
+              <AvatarImage
+                src={avatar ?? undefined}
+                alt={rival?.username ?? "rival"}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.visibility = "hidden";
+                }}
+              />
+              <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
+                {(rival?.username ?? "??").slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 truncate">{rival?.teamName ?? "Rival squad"}</span>
+          </SheetTitle>
+          <SheetDescription>
+            @{rival?.username ?? "unknown"}
+            {rival?.rank != null && ` · Rank #${rival.rank} of ${rival.managerCount}`}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="space-y-4 px-4 pb-6">
+          {loading ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-12 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading rival squad…
+            </p>
+          ) : rival === null ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-center">
+              <Eye className="text-muted-foreground/50 size-8" />
+              <p className="text-muted-foreground text-sm font-medium">
+                No squad picked yet
+              </p>
+              <p className="text-muted-foreground/70 text-xs">
+                This manager hasn't drafted their seven — nothing to inspect.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Points + budget breakdown */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-border/70 bg-secondary/40 p-3 text-center">
+                  <p className="font-score text-2xl font-extrabold text-primary">
+                    {rival.totalPoints}
+                  </p>
+                  <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+                    Total points
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border/70 bg-secondary/40 p-3 text-center">
+                  <p className="font-score flex items-center justify-center gap-1 text-2xl font-extrabold">
+                    <Flame className="size-4 text-primary" />
+                    {rival.lastMatchPoints}
+                  </p>
+                  <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+                    Last match
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/70 bg-secondary/40 p-3">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  <Wallet className="size-3.5" /> Budget
+                </p>
+                <div className="mt-1.5 flex items-baseline justify-between text-sm">
+                  <span className="text-muted-foreground">Spent {formatMoney(rival.totalSpent)}</span>
+                  <span className="font-score text-lg font-bold text-emerald-400">
+                    {formatMoney(rival.remainingBudget)} left
+                  </span>
+                </div>
+                <p className="text-muted-foreground/70 mt-0.5 text-[11px]">
+                  of {formatMoney(rival.effectiveBudget)} available
+                </p>
+              </div>
+
+              {/* Captain */}
+              <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-300">
+                  <Star className="size-3.5" /> Captain (2× points)
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {rival.captainName ?? "Not chosen"}
+                </p>
+              </div>
+
+              {/* Lineup on a visual pitch */}
+              <div>
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  The seven
+                </p>
+                <PitchView byPosition={byPosition} emptyLabel="Empty" />
+              </div>
+            </>
+          )}
+
+          <Button variant="outline" className="w-full" onClick={onClose}>
+            Close inspector
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

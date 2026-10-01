@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { HouseDot, PositionChip, RatingBadge } from "./houses";
 import type { House, Position } from "@/convex/schema";
@@ -8,6 +9,7 @@ export type PitchPlayer = {
   position: Position;
   house: House;
   price?: number;
+  image?: string | null;
   rating?: number | null;
   isCaptain?: boolean;
   isPotm?: boolean;
@@ -19,6 +21,59 @@ const ROWS: { position: Position; slots: number; label: string }[] = [
   { position: "MID", slots: 2, label: "Midfielders" },
   { position: "FWD", slots: 2, label: "Forwards" },
 ];
+
+/**
+ * Circular player badge with optional custom photo. If the photo URL is
+ * missing or fails to load, we fall back to the initials/kit-letter disc —
+ * the component never renders a broken image.
+ */
+export function PlayerBadge({
+  player,
+  size = 64,
+}: {
+  player: Pick<PitchPlayer, "name" | "position" | "isCaptain"> & {
+    image?: string | null;
+  };
+  size?: number;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const photo = typeof player.image === "string" && player.image.length > 0 ? player.image : null;
+  const showPhoto = photo !== null && !imgFailed;
+
+  return (
+    <div
+      className={cn(
+        "relative flex flex-col items-center justify-center overflow-hidden rounded-full ring-2 shadow-lg",
+        player.isCaptain ? "bg-amber-400/90 ring-amber-200" : "bg-slate-900/85 ring-white/40",
+      )}
+      style={{ width: size, height: size }}
+    >
+      {showPhoto ? (
+        <img
+          src={photo}
+          alt={player.name}
+          className="absolute inset-0 size-full object-cover"
+          onError={() => setImgFailed(true)}
+          loading="lazy"
+        />
+      ) : (
+        <>
+          <span className="text-sm font-bold text-white">
+            {player.isCaptain ? "C" : player.name.slice(0, 2).toUpperCase()}
+          </span>
+          <span className="text-[9px] font-semibold uppercase tracking-wide text-white/70">
+            {player.position}
+          </span>
+        </>
+      )}
+      {showPhoto && (
+        <span className="absolute bottom-0 w-full bg-black/55 text-center text-[8px] font-bold uppercase tracking-wide text-white/85">
+          {player.isCaptain ? "C" : player.position}
+        </span>
+      )}
+    </div>
+  );
+}
 
 /** Empty slot placeholder used while building a squad. */
 export function EmptySlot({ label }: { label?: string }) {
@@ -75,19 +130,7 @@ export function PitchView({
                   return (
                     <div key={p.playerId} className="flex flex-col items-center gap-1">
                       <div className="relative">
-                        <div
-                          className={cn(
-                            "flex size-16 flex-col items-center justify-center rounded-full ring-2 shadow-lg",
-                            p.isCaptain ? "bg-amber-400/90 ring-amber-200" : "bg-slate-900/85 ring-white/40",
-                          )}
-                        >
-                          <span className="text-sm font-bold text-white">
-                            {p.isCaptain ? "C" : p.name.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span className="text-[9px] font-semibold uppercase tracking-wide text-white/70">
-                            {p.position}
-                          </span>
-                        </div>
+                        <PlayerBadge player={p} />
                         {p.isPotm && (
                           <span
                             className="absolute -right-1 -top-1 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"

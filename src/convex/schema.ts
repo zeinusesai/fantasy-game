@@ -80,6 +80,7 @@ const schema = defineSchema(
       teamName: v.optional(v.string()), // fantasy team display name
       profilePic: v.optional(v.string()), // optional profile photo (alias of image)
       budget: v.optional(v.number()), // remaining budget in $ (millions as plain numbers)
+      customBudget: v.optional(v.number()), // super-admin budget override for this manager
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
@@ -101,6 +102,8 @@ const schema = defineSchema(
       // Loose per-player stats container (goals/assists/apps history, etc.) —
       // optional so inserting a player never fails over missing/extra stats.
       stats: v.optional(v.any()),
+      // Optional custom player photo (URL or data URL) set by the Super Admin.
+      image: v.optional(v.string()),
     })
       .index("by_house", ["house"])
       .index("by_position", ["position"])
