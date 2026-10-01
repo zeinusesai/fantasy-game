@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { formatMoney, safeBudget } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
+import { AboutCreditsModal, AboutCreditsTrigger } from "@/components/AboutCreditsModal";
 import { AvatarPicker } from "@/components/AvatarPicker";
 import {
   Select,
@@ -43,6 +44,7 @@ export default function Profile() {
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [creditsOpen, setCreditsOpen] = useState(false);
 
   const playersResult = useQuery(api.players.listPlayers);
   const playerChoices = playersResult ?? [];
@@ -145,6 +147,8 @@ export default function Profile() {
                       ? "Moderator Admin"
                       : "Fantasy Manager"}
                 </p>
+                {/* Discreet credits entry point — Profile page only. */}
+                <AboutCreditsTrigger onOpen={() => setCreditsOpen(true)} />
               </div>
             </div>
 
@@ -286,6 +290,8 @@ export default function Profile() {
         username={user?.username ?? null}
         role={user?.role ?? null}
       />
+      {/* About & Credits — discreet modal, Profile page only. */}
+      <AboutCreditsModal open={creditsOpen} onOpenChange={setCreditsOpen} />
     </AppNav>
   );
 }

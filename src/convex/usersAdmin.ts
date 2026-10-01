@@ -206,6 +206,7 @@ export const assignUserBadge = mutation({
       "crown",
       "shield",
       "diamond",
+      "contributor",
     ] as const;
     type BadgeKey = (typeof VALID_BADGES)[number];
     if (!(VALID_BADGES as readonly string[]).includes(key)) {

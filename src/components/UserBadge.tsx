@@ -38,6 +38,11 @@ export const BADGE_META: Record<
     glyph: "💎",
     className: "border-cyan-400/50 bg-cyan-400/15",
   },
+  contributor: {
+    label: "Idea Contributor",
+    glyph: "💡",
+    className: "border-sky-300/50 bg-sky-300/15",
+  },
 };
 
 /** All assignable badge keys for the Super Admin picker. */
@@ -48,7 +53,13 @@ export const ASSIGNABLE_BADGE_KEYS = [
   "crown",
   "shield",
   "diamond",
+  "contributor",
 ] as const;
+
+/** Tooltip copy for custom badges — missing keys fall back to the label. */
+export const BADGE_TOOLTIPS: Record<string, string> = {
+  contributor: "Idea Contributor",
+};
 
 /**
  * Resolve a stored custom badge key → display metadata.
@@ -166,13 +177,18 @@ export function UserBadges({
   const badge = resolveCustomBadge(customBadge);
   const roleIcon = <RoleBadgeIcon role={role} sizeClass={sizeClass} />;
   if (!roleIcon && !badge) return null;
+  // Tooltip copy resolves per-key with a safe fallback to the badge label —
+  // a missing registry entry can never throw during render.
+  const tooltip =
+    (typeof customBadge === "string" && BADGE_TOOLTIPS[customBadge]) ||
+    (badge?.label ?? "");
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {roleIcon}
       {badge && (
         <span
-          title={badge.label}
-          aria-label={`${badge.label} badge`}
+          title={tooltip || undefined}
+          aria-label={`${tooltip || badge.label} badge`}
           className={cn(
             "inline-flex shrink-0 items-center justify-center rounded-full border px-1 leading-none",
             sizeClass,
