@@ -222,6 +222,16 @@ export const assignUserBadge = mutation({
         return { badge: null };
       }
       await ctx.db.patch(targetUserId, { customBadge: key as BadgeKey });
+      // Activity feed: badge assignment (defensive, non-fatal).
+      try {
+        await ctx.runMutation(internal.activity.logActivity, {
+          type: "badge",
+          text: `🏅 @${target.username ?? "a manager"} was awarded the "${key}" badge by the Super Admin!`,
+          actorUserId: targetUserId,
+        });
+      } catch {
+        // feed failure is non-fatal
+      }
       return { badge: key };
       } catch (err) {
       if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;

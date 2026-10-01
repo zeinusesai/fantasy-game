@@ -117,7 +117,60 @@ const schema = defineSchema(
       captainId: v.id("players"), // one of playerIds
       totalSpent: v.number(),
       // lastMatchPoints / totalPoints are derived from matchScores, see points.ts
+      // One-time "Double Down" chip: armed for gw1 or gw2, consumed at settle.
+      activeChip: v.optional(v.string()),
+      chipUsed: v.optional(v.boolean()),
     }).index("by_user", ["userId"]),
+
+    // ===== Gameweek management (deadlines, locks, settle state) =====
+    gameweeks: defineTable({
+      stage: stageValidator, // one row per tournament stage
+      deadlineAt: v.optional(v.number()), // epoch ms — transfers lock after
+      locked: v.optional(v.boolean()), // manual lock by Super Admin
+      settled: v.optional(v.boolean()), // gameweek scored & bonuses resolved
+    }).index("by_stage", ["stage"]),
+
+    // ===== Match result predictor (4 questions, +2 pts each) =====
+    predictions: defineTable({
+      userId: v.id("users"),
+      stage: stageValidator, // predicted fixture
+      pick: houseValidator, // house the manager thinks will win
+      correct: v.optional(v.boolean()), // resolved at settle
+      awarded: v.optional(v.number()), // bonus points actually granted
+    })
+      .index("by_user", ["userId"])
+      .index("by_stage", ["stage"]),
+
+    // ===== 1v1 manager H2H point wagers =====
+    wagers: defineTable({
+      challengerId: v.id("users"),
+      opponentId: v.id("users"),
+      stake: v.number(), // points transferred from loser to winner
+      stage: stageValidator, // the gameweek the wager counts for
+      status: v.union(
+        v.literal("pending"),
+        v.literal("accepted"),
+        v.literal("declined"),
+        v.literal("cancelled"),
+        v.literal("settled"),
+      ),
+      winnerId: v.optional(v.id("users")), // null on a tie (stake returned)
+      settledAt: v.optional(v.number()),
+    })
+      .index("by_status", ["status"])
+      .index("by_challenger", ["challengerId"])
+      .index("by_opponent", ["opponentId"]),
+
+    // ===== Community activity feed (sports-card style, denormalized) =====
+    // Text is baked at log time so deleted users/players degrade to the
+    // stored string instead of breaking the feed.
+    activityEvents: defineTable({
+      type: v.string(), // transfer | badge | chip | rank | result | deadline | wager | settled
+      text: v.string(),
+      ts: v.number(),
+      actorUserId: v.optional(v.id("users")),
+      house: v.optional(houseValidator),
+    }).index("by_ts", ["ts"]),
 
     // ===== House logos (custom, super admin only) =====
     houseLogos: defineTable({

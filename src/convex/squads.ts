@@ -2,7 +2,9 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
-import { formatMoney, safeBudget } from "./configDefaults";
+import { formatMoney, safeBudget, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
+import { stageValidator } from "./schema";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
 const REQUIRED_FORMATION: Record<string, number> = {
@@ -322,9 +324,94 @@ export const saveSquad = mutation({
 
     const existing = await getSquadForUser(ctx, user._id);
     if (existing) {
+      // Transfer deadline gate: once a stage is locked/settled/past deadline
+      // the saved squad may not change. First-time saves stay allowed so a
+      // manager joining late can still field a team.
+      const change = existing.playerIds.map(String).join(",") !== playerIds.map(String).join(",");
+      if (change) {
+        const gwRows = await ctx.db.query("gameweeks").collect();
+        const gwList = gwRows ?? [];
+        for (const stage of GW_STAGES) {
+          const gw = gwList.find((g) => g.stage === stage);
+          if (!gw) continue;
+          if (gw.settled === true) {
+            throw new Error(`Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"} is settled — transfers are closed.`);
+          }
+          if (gw.locked === true) {
+            throw new Error(`Transfers are locked for Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"}.`);
+          }
+          if (typeof gw.deadlineAt === "number" && Date.now() > gw.deadlineAt) {
+            throw new Error(`The transfer deadline for Gameweek ${GW_STAGES.indexOf(stage) < 2 ? "1" : "2"} has passed.`);
+          }
+        }
+      }
       await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent });
+      // Activity feed: transfer made (defensive, non-fatal).
+      if (change) {
+        try {
+          const removed = existing.playerIds.filter((id) => !playerIds.includes(id));
+          const added = playerIds.filter((id) => !existing.playerIds.includes(id));
+          const parts: string[] = [];
+          for (const pid of added.slice(0, 3)) {
+            const p = await ctx.db.get(pid);
+            if (p) parts.push(`IN ${p.name}`);
+          }
+          for (const pid of removed.slice(0, 3)) {
+            const p = await ctx.db.get(pid);
+            if (p) parts.push(`OUT ${p.name}`);
+          }
+          if (parts.length > 0) {
+            await ctx.runMutation(internal.activity.logActivity, {
+              type: "transfer",
+              text: `🔄 @${user.username ?? "a manager"}: ${parts.join(" · ")}`,
+              actorUserId: user._id,
+            });
+          }
+        } catch {
+          // feed failure is non-fatal
+        }
+      }
       return existing._id;
     }
-    return ctx.db.insert("squads", { userId: user._id, playerIds, captainId, totalSpent });
+    const newId = await ctx.db.insert("squads", {
+      userId: user._id,
+      playerIds,
+      captainId,
+      totalSpent,
+    });
+    try {
+      await ctx.runMutation(internal.activity.logActivity, {
+        type: "transfer",
+        text: `🆕 @${user.username ?? "a manager"} drafted their starting 7!`,
+        actorUserId: user._id,
+      });
+    } catch {
+      // feed failure is non-fatal
+    }
+    return newId;
+  },
+});
+
+/**
+ * The signed-in manager's chip status (armed chip, used flag) — null-safe.
+ */
+export const getMyChip = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const userId = await getAuthUserId(ctx);
+      if (userId === null) return { chip: null, used: false, available: false };
+      const squad = await getSquadForUser(ctx, userId);
+      if (!squad) return { chip: null, used: false, available: false };
+      const armed = typeof squad.activeChip === "string" ? squad.activeChip : null;
+      const used = squad.chipUsed === true;
+      return {
+        chip: armed,
+        used,
+        available: armed === null && !used,
+      };
+    } catch {
+      return { chip: null, used: false, available: false };
+    }
   },
 });

@@ -3,7 +3,27 @@ export const CONFIG_KEYS = {
   BUDGET: "budget",
   HOUSE_LIMIT: "houseLimit",
   ADMIN_MESSAGE: "adminMessage",
+  TOURNAMENT_FINALIZED: "tournamentFinalized",
 } as const;
+
+/**
+ * Gameweek structure: the 4-match tournament maps onto 2 gameweeks.
+ * GW1 = both semifinals, GW2 = 3rd-place match + final.
+ */
+export const GW_STAGES = ["semifinal1", "semifinal2", "third_place", "final"] as const;
+export type GwStage = (typeof GW_STAGES)[number];
+
+/** The one-time "Double Down" chip id for each gameweek. */
+export const CHIP_GW1 = "double_down_gw1";
+export const CHIP_GW2 = "double_down_gw2";
+export const VALID_CHIPS = [CHIP_GW1, CHIP_GW2] as const;
+
+/** Which chip doubles which stage's points. */
+export function chipForStage(stage: string): string | null {
+  if (stage === "semifinal1" || stage === "semifinal2") return CHIP_GW1;
+  if (stage === "third_place" || stage === "final") return CHIP_GW2;
+  return null;
+}
 
 export const DEFAULT_CONFIG = {
   budget: 70_000_000, // $70m global starting budget

@@ -44,7 +44,9 @@ export function PlayerBadge({
     <div
       className={cn(
         "relative flex flex-col items-center justify-center overflow-hidden rounded-full ring-2 shadow-lg",
-        player.isCaptain ? "bg-amber-400/90 ring-amber-200" : "bg-slate-900/85 ring-white/40",
+        player.isCaptain
+          ? "bg-slate-900/90 ring-2 ring-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.65)]"
+          : "bg-slate-900/85 ring-white/40",
       )}
       style={{ width: size, height: size }}
     >
@@ -68,7 +70,19 @@ export function PlayerBadge({
       )}
       {showPhoto && (
         <span className="absolute bottom-0 w-full bg-black/55 text-center text-[8px] font-bold uppercase tracking-wide text-white/85">
-          {player.isCaptain ? "C" : player.position}
+          {player.isCaptain ? "(C)" : player.position}
+        </span>
+      )}
+      {/* Golden captain armband frame */}
+      {player.isCaptain && (
+        <span
+          aria-label="Captain"
+          title="Captain"
+          className="pointer-events-none absolute inset-0 rounded-full border-2 border-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.7)]"
+        >
+          <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-1.5 text-[8px] font-black tracking-wide text-amber-950 shadow">
+            (C)
+          </span>
         </span>
       )}
     </div>
