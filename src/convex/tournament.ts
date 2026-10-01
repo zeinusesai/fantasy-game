@@ -109,7 +109,18 @@ export const getTournamentResults = query({
       base.managerCount = standings.length;
       base.hasResults = standings.length > 0;
 
-      if (standings.length > 0) {
+      // ── Podium / champion / forfeit gate ─────────────────────────────────
+      // Before kickoff every manager is tied on 0, so "first" and "bottom" are
+      // decided purely by squad-creation order — an arbitrary result that must
+      // never be published as a podium or a forfeit. Both are therefore only
+      // computed once the tournament has actually been played OR formally
+      // concluded. `some(points !== 0)` lets a penalty-only round count as
+      // "played" just as a scoring round does.
+      const anyPointsScored = standings.some((m) => m.totalPoints !== 0);
+      const resultsAreMeaningful =
+        settings.tournamentEnded === true || anyPointsScored;
+
+      if (standings.length > 0 && resultsAreMeaningful) {
         base.podium = standings.slice(0, 3);
         base.champion = standings[0] ?? null;
 

@@ -90,6 +90,19 @@ async function computeAwards(ctx: QueryCtx | MutationCtx) {
     if (entries.length === 0) return out;
 
     const ranked = entries.slice().sort(compareByPoints);
+
+    // ── Performance-badge gate ──────────────────────────────────────────
+    // Before kickoff (or after a "Reset All Points") EVERY manager sits at
+    // exactly 0. Ranking that table would hand "Tactical Genius" to whoever
+    // happened to be registered first and "Unlucky Manager" to the rest —
+    // pure noise that reads as a bug. Performance badges therefore only
+    // compute once at least one manager has actually banked points.
+    //
+    // `some(points !== 0)` (rather than `some(points > 0)`) so a penalty-only
+    // round, which can legitimately push totals negative, still counts as
+    // "the tournament has started".
+    const anyPointsScored = entries.some((e) => e.points !== 0);
+
     const toAwardUser = (
       e: { userId: string; points: number } | undefined,
     ): AwardUser | null => {
@@ -107,9 +120,11 @@ async function computeAwards(ctx: QueryCtx | MutationCtx) {
 
     // Tactical Genius = highest total. Unlucky Manager = lowest total, but
     // never the same person — if there's only one manager, no "unlucky" tag.
-    out.tacticalGenius = toAwardUser(ranked[0]);
-    if (ranked.length > 1) {
-      out.unluckyManager = toAwardUser(ranked[ranked.length - 1]);
+    if (anyPointsScored) {
+      out.tacticalGenius = toAwardUser(ranked[0]);
+      if (ranked.length > 1) {
+        out.unluckyManager = toAwardUser(ranked[ranked.length - 1]);
+      }
     }
 
     // ── Differential Master ──
@@ -167,7 +182,9 @@ async function computeAwards(ctx: QueryCtx | MutationCtx) {
       const best = pool
         .slice()
         .sort((a, b) => (Number(b.fantasyPoints) || 0) - (Number(a.fantasyPoints) || 0))[0];
-      if (best) {
+      // Require a non-zero score: a completed match whose player rows are all
+      // 0 hasn't produced a genuine "Player of the Week".
+      if (best && (Number(best.fantasyPoints) || 0) > 0) {
         const player = playerById.get(best.playerId);
         if (player) {
           out.playerOfTheWeek = {

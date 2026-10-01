@@ -72,6 +72,20 @@ export default function Leaderboard() {
     : null;
   const tournamentEnded = resultsResult?.tournamentEnded === true;
 
+  // ── Tournament-progress gate ───────────────────────────────────────────
+  // Every trophy badge below is a PERFORMANCE claim: "you won", "you came
+  // last". Before kickoff (or after a Reset All Points) every manager sits at
+  // exactly 0 points and the table is ordered purely by squad-creation time —
+  // so rendering medals there is pure clutter that reads as a bug.
+  //
+  // `isTournamentActiveOrEnded` is therefore the master switch: it becomes
+  // true as soon as the tournament is formally ended OR anyone has banked a
+  // non-zero total. `some(u => (u.totalPoints ?? 0) > 0)` uses `> 0` so a
+  // penalty-only round still counts as "played".
+  const totalUsersCount = rows.length;
+  const hasScoredMatch = rows.some((u) => (u.totalPoints ?? 0) > 0);
+  const isTournamentActiveOrEnded = tournamentEnded || hasScoredMatch;
+
   // Rival Squad Inspector — clicking a team opens the drawer for that manager.
   const [inspectUserId, setInspectUserId] = useState<Id<"users"> | null>(null);
   // 1v1 wager challenge target.
@@ -120,16 +134,56 @@ export default function Leaderboard() {
                 <TableBody>
                   {rows.map((row) => {
                     const isMe = row.userId === user?._id;
-                    const isGenius = awardsResult?.tacticalGenius?.userId === row.userId;
-                    const isUnlucky = awardsResult?.unluckyManager?.userId === row.userId;
-                    const isDiffMaster = awardsResult?.differentialMaster?.userId === row.userId;
-                    // 🥇 Plastic Gold Medalist — the 1st place manager. Uses the
-                    // tournament result's champion when available, and falls
-                    // back to rank 1 so an active board still shows it.
+                    // Strict numeric normalisation — `?? 0` on every points
+                    // comparison so a null/undefined score can never satisfy
+                    // (or silently fail) a badge guard.
+                    const rowPoints = row.totalPoints ?? 0;
+
+                    // 🥇 Plastic Gold Medalist — the 1st place manager.
+                    // Requires BOTH the tournament to be underway/ended AND
+                    // this manager to actually hold points, so an all-zero
+                    // table never crowns a "champion".
+                    const isFirstPlace =
+                      isTournamentActiveOrEnded && row.rank === 1 && rowPoints > 0;
+                    // Prefers the authoritative champion id when the Super
+                    // Admin has ended the tournament; otherwise falls back to
+                    // the live rank-1 manager.
                     const isGoldMedalist =
-                      championId !== null ? championId === String(row.userId) : row.rank === 1;
-                    // ⚠️ Forfeit — bottom place (set on end-tournament).
-                    const isForfeit = forfeitIds.has(String(row.userId));
+                      championId !== null
+                        ? championId === String(row.userId) && (isTournamentActiveOrEnded || rowPoints > 0)
+                        : isFirstPlace;
+
+                    // ⚠️ Forfeit — bottom place. Requires the tournament to be
+                    // formally ended (the only moment a forfeit is awarded)
+                    // AND a genuine result, so a live 0-point tie can't badge
+                    // every single manager as a forfeiter.
+                    const isLastPlace =
+                      isTournamentActiveOrEnded &&
+                      totalUsersCount > 1 &&
+                      row.rank === totalUsersCount &&
+                      rowPoints > 0;
+                    // The server's forfeit list is authoritative once matches
+                    // have actually been played, so a manager who legitimately
+                    // finishes bottom on 0 points still forfeits. It is only
+                    // suppressed when the whole table is still at 0 (nobody
+                    // has played yet), which is the mass-assignment bug.
+                    const isForfeit =
+                      tournamentEnded &&
+                      (hasScoredMatch || rowPoints > 0) &&
+                      (forfeitIds.has(String(row.userId)) || isLastPlace);
+
+                    // Performance badges only count once points exist — the
+                    // server already withholds these on an all-zero table, and
+                    // this re-checks it so a stale snapshot can't leak one.
+                    const isGenius =
+                      isTournamentActiveOrEnded &&
+                      awardsResult?.tacticalGenius?.userId === row.userId;
+                    const isUnlucky =
+                      isTournamentActiveOrEnded &&
+                      awardsResult?.unluckyManager?.userId === row.userId;
+                    const isDiffMaster =
+                      isTournamentActiveOrEnded &&
+                      awardsResult?.differentialMaster?.userId === row.userId;
                     const avatar =
                       row.avatar?.startsWith("data:") || row.avatar?.startsWith("http")
                         ? row.avatar
@@ -138,9 +192,10 @@ export default function Leaderboard() {
                       <TableRow
                         key={row.userId}
                         className={cn(
-                          // 1st place: gold highlight + subtle glow
-                          row.rank === 1 &&
-                            row.totalPoints > 0 &&
+                          // 1st place: gold highlight + subtle glow. Same
+                          // guard as the gold-medalist badge so the row
+                          // styling and the badge can never disagree.
+                          isFirstPlace &&
                             "border-b-amber-400/40 bg-gradient-to-r from-amber-400/15 via-amber-400/5 to-transparent shadow-[0_0_24px_rgba(251,191,36,0.12)]",
                           isMe && "bg-primary/5 hover:bg-primary/10",
                         )}
@@ -218,7 +273,7 @@ export default function Leaderboard() {
                               )}
                             </span>
                             <Eye className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
-                            {row.rank === 1 && row.totalPoints > 0 && (
+                            {isFirstPlace && (
                               <Badge className="gap-1 whitespace-normal border border-amber-400/40 bg-amber-400/15 py-1 text-amber-200 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
                                 <Trophy className="size-3 shrink-0" />
                                 {tournamentEnded
@@ -266,7 +321,7 @@ export default function Leaderboard() {
                         </TableCell>
                         <TableCell className="text-right">
                           <span className="font-score text-lg font-extrabold text-primary">
-                            {row.totalPoints}
+                            {rowPoints}
                           </span>
                         </TableCell>
                       </TableRow>
