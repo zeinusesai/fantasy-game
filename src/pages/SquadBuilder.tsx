@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatMoney, parseMoneyInput, safeBudget } from "@/convex/configDefaults";
+import { formatMoney, parseMoneyInput, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { CHIP_GW1, CHIP_GW2 } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
@@ -105,12 +105,10 @@ export default function SquadBuilder() {
   const mySquad = mySquadResult ?? null;
   const loading = playersResult === undefined || mySquadResult === undefined;
 
-  // $70m platform baseline. A Super-Admin customBudget override (or legacy
-  // stored budget) wins; safeBudget guards NaN/Infinity/missing values so
-  // budget math can never produce NaN — unconfigured users get $70m.
-  const budget = safeBudget(
-    user?.customBudget ?? user?.budget ?? config?.budget,
-  );
+  // Every manager shares ONE fixed $70m budget. safeBudget() ignores any
+  // per-user/legacy value and always resolves to the platform constant, so
+  // this can never be NaN, Infinity or undefined — even before auth loads.
+  const budget = safeBudget();
   const houseLimit = config?.houseLimit ?? 3;
 
   const [selected, setSelected] = useState<Id<"players">[]>([]);
@@ -271,9 +269,14 @@ export default function SquadBuilder() {
     .map((id) => playerMap.get(id))
     .filter((p): p is NonNullable<typeof p> => Boolean(p));
 
-  const totalSpentRaw = selectedPlayers.reduce((sum, p) => sum + (p.price ?? 0), 0);
-  const totalSpent = Number.isFinite(totalSpentRaw) ? totalSpentRaw : 0;
-  const remaining = budget - totalSpent;
+  // Strict numeric parsing per price (Number()) so a malformed/NaN price can
+  // never concatenate or poison the sum — remaining = 70m - sum(prices).
+  const totalSpent = selectedPlayers.reduce(
+    (sum, p) => sum + toSafeAmount(p.price),
+    0,
+  );
+  const remaining = Math.max(budget - totalSpent, 0);
+  const overBudgetBy = Math.max(totalSpent - budget, 0);
 
   const positionCounts = selectedPlayers.reduce(
     (acc, p) => {
@@ -322,7 +325,7 @@ export default function SquadBuilder() {
       `House limit exceeded: max ${houseLimit} players from one house.`,
     );
   }
-  if (remaining < 0) problems.push(`Over budget by ${formatMoney(-remaining)}.`);
+  if (overBudgetBy > 0) problems.push(`Over budget by ${formatMoney(overBudgetBy)}.`);
   if (!captainId && selected.length === 7) problems.push("Choose a captain.");
 
   const toggle = (id: Id<"players">) => {
@@ -451,10 +454,10 @@ export default function SquadBuilder() {
                 </p>
                 <p
                   className={`font-score text-2xl font-bold ${
-                    remaining < 0 ? "text-red-400" : "text-emerald-400"
+                    overBudgetBy > 0 ? "text-red-400" : "text-emerald-400"
                   }`}
                 >
-                  {formatMoney(Math.max(remaining, 0))}
+                  {formatMoney(remaining)}
                 </p>
                 <p className="text-muted-foreground mt-1 text-xs">
                   of {formatMoney(budget)} · spent {formatMoney(totalSpent)}
@@ -616,7 +619,7 @@ export default function SquadBuilder() {
                     const isSelected = selected.includes(p._id);
                     const houseCount = houseCounts[p.house] ?? 0;
                     const wouldBreakHouse = !isSelected && houseCount >= houseLimit;
-                    const canAfford = p.price <= remaining;
+                    const canAfford = toSafeAmount(p.price) <= remaining;
                     const affordable = isSelected || canAfford;
                     const pendingReq = pendingByPlayer.get(p._id);
                     const ownership = ownershipFor(p._id);

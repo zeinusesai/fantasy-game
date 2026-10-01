@@ -25,8 +25,16 @@ export function chipForStage(stage: string): string | null {
   return null;
 }
 
+/**
+ * Every manager on the platform shares ONE fixed starting budget: $70m.
+ * This constant is the single source of truth — per-user values (the legacy
+ * `users.budget` field and the old Super-Admin `users.customBudget` override)
+ * are deliberately ignored everywhere so the cap can never drift.
+ */
+export const FIXED_MANAGER_BUDGET = 70_000_000;
+
 export const DEFAULT_CONFIG = {
-  budget: 70_000_000, // $70m global starting budget
+  budget: FIXED_MANAGER_BUDGET, // $70m — fixed for all managers
   houseLimit: 3,
 };
 
@@ -61,14 +69,29 @@ export function normalizeUsername(raw: string): string {
 }
 
 /**
- * Defensive budget coercion: any missing/NaN/Infinity/negative budget value
- * falls back to the platform default so arithmetic downstream can never
- * silently pass validation on `NaN` (NaN > x is always false).
+ * The one and only budget resolver. The argument is accepted (and ignored)
+ * so legacy call sites keep compiling, but the result is ALWAYS the fixed
+ * $70m platform budget.
+ *
+ * Why this is a constant resolver rather than validation: a per-user budget
+ * that could be missing, `NaN`, `Infinity`, negative or tampered with is a
+ * silent data-integrity hole — `NaN > x` is always false, so a corrupt value
+ * would pass every squad budget check. Returning a literal removes the whole
+ * class of failure. Always finite, always non-negative, never user-supplied.
  */
-export function safeBudget(value: number | null | undefined, fallback: number = DEFAULT_CONFIG.budget): number {
-  if (typeof value !== "number") return fallback;
-  if (!Number.isFinite(value) || value < 0) return fallback;
-  return value;
+export function safeBudget(_value?: number | null): number {
+  return FIXED_MANAGER_BUDGET;
+}
+
+/**
+ * Strictly parses any price/budget-shaped value into a finite, non-negative
+ * number. Used for client-side budget math so a string price can never cause
+ * string concatenation, and so `NaN` never leaks into a sum.
+ */
+export function toSafeAmount(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
 }
 
 // House color tokens used across UI + seed logo SVGs.

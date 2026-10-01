@@ -4,10 +4,12 @@ import {
   mutation,
   internalQuery,
   internalAction,
+  internalMutation,
   type QueryCtx,
 } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireSuperAdmin } from "./lib";
+import { FIXED_MANAGER_BUDGET } from "./configDefaults";
 import { internal } from "./_generated/api";
 import { modifyAccountCredentials, invalidateSessions } from "@convex-dev/auth/server";
 import { houseValidator } from "./schema";
@@ -66,8 +68,8 @@ export const listUsers = query({
         image: u.image ?? null,
         profilePic: u.profilePic ?? null,
         role: u.role ?? null,
-        budget: u.budget ?? null,
-        customBudget: u.customBudget ?? null,
+        // Fixed platform budget for every manager (legacy fields ignored).
+        budget: FIXED_MANAGER_BUDGET,
         customBadge: u.customBadge ?? null,
       }));
     } catch {
@@ -258,7 +260,7 @@ export const getUserDetail = query({
       image: user.image ?? null,
       profilePic: user.profilePic ?? null,
       role: user.role ?? null,
-      budget: user.budget ?? null,
+      budget: FIXED_MANAGER_BUDGET,
       squadSize: squad ? squad.playerIds.length : 0,
     };
   },
@@ -269,9 +271,8 @@ export const updateUser = mutation({
     userId: v.id("users"),
     teamName: v.optional(v.string()),
     image: v.optional(v.string()),
-    budget: v.optional(v.number()),
   },
-  handler: async (ctx, { userId, teamName, image, budget }) => {
+  handler: async (ctx, { userId, teamName, image }) => {
     await requireSuperAdmin(ctx);
     const patch: Record<string, unknown> = {};
     if (teamName !== undefined) {
@@ -282,41 +283,37 @@ export const updateUser = mutation({
       patch.teamName = trimmed;
     }
     if (image !== undefined) patch.image = image || undefined;
-    if (budget !== undefined) {
-      if (!Number.isFinite(budget) || budget < 0) {
-        throw new Error("Budget must be a non-negative number.");
-      }
-      patch.budget = budget;
-    }
+    // NOTE: the budget argument was removed — the budget is a fixed $70m for
+    // every manager and can no longer be edited per user.
     await ctx.db.patch(userId, patch);
   },
 });
 
 /**
- * Super Admin only: independently override one manager's budget (e.g. $60m
- * or $75m while the global default stays at $65m). Writes both the canonical
- * `customBudget` override and the legacy `budget` field so older budget
- * checks (squad validation) agree. Strictly parses/validates the number.
+ * Internal (server/CLI tooling only): normalise every existing user record to
+ * the fixed $70m budget. Writes `budget: 70_000_000` and clears the legacy
+ * `customBudget` override on all rows, so no stale override can survive the
+ * migration. Safe to re-run — idempotent.
  */
-export const setUserBudget = mutation({
-  args: { userId: v.id("users"), budget: v.number() },
-  handler: async (ctx, { userId, budget }) => {
-    await requireSuperAdmin(ctx);
-
-    // Defensive parsing — reject NaN/Infinity/negatives before touching the DB.
-    const value = Number(budget);
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error("Budget must be a non-negative number, e.g. 60000000 for $60m.");
-    }
-    const target = await ctx.db.get(userId);
-    if (!target) throw new Error("User not found.");
-
-    const rounded = Math.round(value);
+export const normalizeBudgetsInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
     try {
-      await ctx.db.patch(userId, { budget: rounded, customBudget: rounded });
-      return { budget: rounded };
+      const users = await ctx.db.query("users").collect();
+      let updated = 0;
+      for (const user of users) {
+        if (user.budget === FIXED_MANAGER_BUDGET && user.customBudget === undefined) {
+          continue; // already correct — skip the write
+        }
+        await ctx.db.patch(user._id, {
+          budget: FIXED_MANAGER_BUDGET,
+          customBudget: undefined, // patching undefined removes the field
+        });
+        updated += 1;
+      }
+      return { total: users.length, updated, budget: FIXED_MANAGER_BUDGET };
     } catch {
-      throw new Error("Could not set the budget — please try again.");
+      throw new Error("Could not normalise budgets.");
     }
   },
 });
@@ -384,30 +381,96 @@ export const getUserIdByUsernameInternal = internalQuery({
 export const resetPasswordAction = internalAction({
   args: { username: v.string(), userId: v.id("users"), newPassword: v.string() },
   handler: async (ctx, { username, userId, newPassword }) => {
+    // Defensive: never forward a malformed credential to the auth layer.
+    const secret = typeof newPassword === "string" ? newPassword : "";
+    if (secret.length < 4) throw new Error("Invalid credential.");
     await modifyAccountCredentials(ctx, {
       provider: "password",
-      account: { id: username, secret: newPassword },
+      account: { id: username, secret },
     });
     await invalidateSessions(ctx, { userId });
   },
 });
 
-/** Super admin resets any user's password. */
+/**
+ * Cryptographically-flavoured temporary password generator (server-side so
+ * the value only ever exists in this response — it is never written to the
+ * database in plaintext; the auth provider stores only its scrypt hash).
+ */
+function generateTemporaryPassword(): string {
+  const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(12);
+  // `crypto` is available in the Convex runtime; fall back to Math.random
+  // only if the global is somehow missing so this can never throw.
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+}
+
+/**
+ * Super Admin only: resets any user's password.
+ *
+ * Pass `newPassword` to set a specific one, or omit it to have the server
+ * generate a strong temporary password which is returned ONCE in the response
+ * so the admin can hand it to the manager. This is the safe stand-in for
+ * "viewing" a password: Convex Auth only ever stores a one-way scrypt hash, so
+ * the original secret is genuinely unrecoverable — resetting is the only
+ * correct operation, and no plaintext is ever persisted.
+ *
+ * Errors are generic on purpose so a non-super-admin caller cannot use this to
+ * probe which accounts exist.
+ */
 export const requestPasswordReset = mutation({
-  args: { userId: v.id("users"), newPassword: v.string() },
+  args: { userId: v.id("users"), newPassword: v.optional(v.string()) },
   handler: async (ctx, { userId, newPassword }) => {
-    await requireSuperAdmin(ctx);
-    if (!newPassword || newPassword.length < 4) {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch {
+      // Generic message: never reveal whether the target account exists.
+      throw new Error("Could not reset the password — please try again.");
+    }
+
+    const provided = typeof newPassword === "string" ? newPassword.trim() : "";
+    if (provided !== "" && provided.length < 4) {
       throw new Error("New password must be at least 4 characters.");
     }
-    const user = await ctx.db.get(userId);
-    if (!user || !user.username) {
-      throw new Error("This account has no username credential to reset.");
+    const usingGenerated = provided === "";
+    const secret = usingGenerated ? generateTemporaryPassword() : provided;
+    if (!Number.isFinite(secret.length) || secret.length < 4) {
+      throw new Error("Could not generate a password — please try again.");
     }
-    await ctx.scheduler.runAfter(0, internal.usersAdmin.resetPasswordAction, {
-      username: user.username,
-      userId,
-      newPassword,
-    });
+
+    try {
+      const user = await ctx.db.get(userId);
+      const username = typeof user?.username === "string" ? user.username : null;
+      if (!user || !username) {
+        // Same generic message as every other failure path.
+        throw new Error("Could not reset the password — please try again.");
+      }
+      await ctx.scheduler.runAfter(0, internal.usersAdmin.resetPasswordAction, {
+        username,
+        userId,
+        newPassword: secret,
+      });
+      // Only ever returned to the Super Admin, only for a generated password.
+      return { ok: true as const, temporaryPassword: usingGenerated ? secret : null };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        !err.message.startsWith("Could not reset the password")
+      ) {
+        throw new Error("Could not reset the password — please try again.");
+      }
+      throw err;
+    }
   },
 });

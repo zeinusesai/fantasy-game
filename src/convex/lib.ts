@@ -2,7 +2,7 @@ import type { QueryCtx, MutationCtx } from "./_generated/server";
 import { internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { DEFAULT_CONFIG, CONFIG_KEYS } from "./configDefaults";
+import { DEFAULT_CONFIG, CONFIG_KEYS, FIXED_MANAGER_BUDGET } from "./configDefaults";
 import type { Doc, Id } from "./_generated/dataModel";
 
 export const getUserIdByUsername = internalQuery({
@@ -18,13 +18,16 @@ export const getUserIdByUsername = internalQuery({
 
 export type PlatformUser = Doc<"users">;
 
+/**
+ * Platform-wide settings. The budget is FIXED at $70m for every manager, so
+ * it is returned from the constant rather than from any stored config row —
+ * a stale or tampered `config` row can never raise or lower the cap.
+ */
 export async function getPlatformConfig(ctx: QueryCtx | MutationCtx) {
   const rows = await ctx.db.query("config").collect();
-  const budgetRow = rows.find((r) => r.key === CONFIG_KEYS.BUDGET);
   const houseRow = rows.find((r) => r.key === CONFIG_KEYS.HOUSE_LIMIT);
   return {
-    budget:
-      typeof budgetRow?.value === "number" ? budgetRow.value : DEFAULT_CONFIG.budget,
+    budget: FIXED_MANAGER_BUDGET,
     houseLimit:
       typeof houseRow?.value === "number" ? houseRow.value : DEFAULT_CONFIG.houseLimit,
   };

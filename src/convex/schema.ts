@@ -79,8 +79,12 @@ const schema = defineSchema(
       username: v.optional(v.string()), // unique sign-in name (managers + admins)
       teamName: v.optional(v.string()), // fantasy team display name
       profilePic: v.optional(v.string()), // optional profile photo (alias of image)
-      budget: v.optional(v.number()), // remaining budget in $ (millions as plain numbers)
-      customBudget: v.optional(v.number()), // super-admin budget override for this manager
+      // LEGACY budget fields. Every manager now shares ONE fixed $70m budget
+      // (see FIXED_MANAGER_BUDGET in configDefaults.ts) — these are retained
+      // only so existing rows stay readable and are IGNORED by every budget
+      // calculation. Never write them from the app again.
+      budget: v.optional(v.number()), // deprecated: legacy per-user budget
+      customBudget: v.optional(v.number()), // deprecated: legacy admin override
       customBadge: v.optional(v.string()), // custom badge: star | gold_checkmark | fire | crown | shield | diamond | none
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
     })

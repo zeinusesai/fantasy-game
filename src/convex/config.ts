@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
 import { requireSuperAdmin, getPlatformConfig } from "./lib";
-import { CONFIG_KEYS } from "./configDefaults";
+import { CONFIG_KEYS, FIXED_MANAGER_BUDGET } from "./configDefaults";
 
 export const getConfig = query({
   args: {},
@@ -66,23 +66,17 @@ export const setAdminMessage = mutation({
   },
 });
 
+/**
+ * DEPRECATED — the starting budget is a fixed $70m for every manager and can
+ * no longer be changed, so this mutation always resolves to the constant and
+ * never writes anything. Kept only so older clients calling it get a clean
+ * response instead of "function not found".
+ */
 export const setBudget = mutation({
-  args: { budget: v.number() },
-  handler: async (ctx, { budget }) => {
+  args: { budget: v.optional(v.number()) },
+  handler: async (ctx) => {
     await requireSuperAdmin(ctx);
-    if (!Number.isFinite(budget) || budget < 0) {
-      throw new Error("Budget must be a non-negative number.");
-    }
-    const existing = await ctx.db
-      .query("config")
-      .withIndex("by_key", (q) => q.eq("key", CONFIG_KEYS.BUDGET))
-      .unique();
-    if (existing) {
-      await ctx.db.patch(existing._id, { value: budget });
-    } else {
-      await ctx.db.insert("config", { key: CONFIG_KEYS.BUDGET, value: budget });
-    }
-    return budget;
+    return FIXED_MANAGER_BUDGET;
   },
 });
 
@@ -110,29 +104,19 @@ export const setHouseLimit = mutation({
 });
 
 /**
- * Internal (server/CLI tooling only — unreachable from the client): upsert
- * the stored global budget. Used for platform-default migrations; strictly
- * validates the number before writing.
+ * Internal (server/CLI tooling only — unreachable from the client): deletes
+ * the legacy stored global-budget config row. The budget now lives in
+ * FIXED_MANAGER_BUDGET, so any leftover row is dead weight that could
+ * confuse a future reader. Idempotent — safe to re-run.
  */
-export const setBudgetInternal = internalMutation({
-  args: { budget: v.number() },
-  handler: async (ctx, { budget }) => {
-    const value = Number(budget);
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error("Budget must be a non-negative, finite number.");
-    }
+export const clearStoredBudgetInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
     const existing = await ctx.db
       .query("config")
       .withIndex("by_key", (q) => q.eq("key", CONFIG_KEYS.BUDGET))
       .unique();
-    if (existing) {
-      await ctx.db.patch(existing._id, { value: Math.round(value) });
-    } else {
-      await ctx.db.insert("config", {
-        key: CONFIG_KEYS.BUDGET,
-        value: Math.round(value),
-      });
-    }
-    return Math.round(value);
+    if (existing) await ctx.db.delete(existing._id);
+    return { removed: existing !== null, budget: FIXED_MANAGER_BUDGET };
   },
 });

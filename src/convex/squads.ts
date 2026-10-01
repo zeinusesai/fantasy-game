@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
-import { formatMoney, safeBudget, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
+import { formatMoney, safeBudget, toSafeAmount, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
 import { stageValidator } from "./schema";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -35,7 +35,7 @@ export const getMySquad = query({
     const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
     return {
       squadId: squad._id,
-      totalSpent: squad.totalSpent,
+      totalSpent: toSafeAmount(squad.totalSpent),
       players: players.filter(Boolean) as SquadPlayer[],
       captainId: captain ? squad.captainId : null,
     };
@@ -147,14 +147,9 @@ export const getSquadByUserId = query({
       const mine = rows.find((r) => r.userId === userId);
       const rank = mine ? rows.findIndex((r) => r.userId === userId) + 1 : null;
 
-      // Budget: custom override → stored budget → platform default.
-      const { budget: platformBudget } = await getPlatformConfig(ctx);
-      const effectiveBudget =
-        typeof user.customBudget === "number"
-          ? user.customBudget
-          : typeof user.budget === "number"
-            ? user.budget
-            : platformBudget;
+      // Fixed $70m for everyone — per-user budget/customBudget values are
+      // intentionally ignored (see FIXED_MANAGER_BUDGET).
+      const effectiveBudget = safeBudget(user?.budget);
 
       return {
         squadId: squad._id,
@@ -165,9 +160,9 @@ export const getSquadByUserId = query({
         players,
         captainId: captain ? squad.captainId : null,
         captainName: captain?.name ?? null,
-        totalSpent: squad.totalSpent,
+        totalSpent: toSafeAmount(squad.totalSpent),
         effectiveBudget,
-        remainingBudget: Math.max(effectiveBudget - squad.totalSpent, 0),
+        remainingBudget: Math.max(effectiveBudget - toSafeAmount(squad.totalSpent), 0),
         totalPoints: mine?.total ?? 0,
         lastMatchPoints: mine?.lastMatch ?? 0,
         rank,
@@ -293,28 +288,22 @@ export const saveSquad = mutation({
     // Budget — wrapped so an unexpected math failure surfaces as a clean
     // message instead of a raw server error; validation Errors rethrow
     // untouched so the client toast keeps its specific guidance.
-    const totalSpent = players.reduce((sum, p) => sum + (p?.price ?? 0), 0);
+    //
+    // Strict numeric parsing per price: a malformed / NaN / negative price
+    // becomes 0 rather than poisoning the sum (NaN > x is always false, which
+    // would otherwise let a corrupt squad slip past the cap).
+    const totalSpent = players.reduce((sum, p) => sum + toSafeAmount(p?.price), 0);
     try {
       if (!Number.isFinite(totalSpent)) {
         throw new Error("Squad value could not be calculated — please refresh and try again.");
       }
-      // Effective budget: Super Admin override (customBudget, or the legacy
-      // stored budget) → platform default ($70m). safeBudget guards against
-      // NaN/Infinity/negatives so comparisons can never silently pass.
-      const overrideRaw = user.customBudget ?? user.budget;
-      const hasOverride = typeof overrideRaw === "number";
-      // The global cap only binds managers without an explicit override —
-      // otherwise a raised budget (e.g. $75m over a $70m global) would be
-      // rejected by the global check before the override is considered.
-      if (!hasOverride && totalSpent > budget) {
-        throw new Error(
-          `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(budget)}.`,
-        );
-      }
-      const myBudget = safeBudget(hasOverride ? overrideRaw : budget, budget);
+      // The budget is FIXED at $70m for every manager. `budget` already comes
+      // from getPlatformConfig (which returns the constant); re-resolving it
+      // through safeBudget guarantees no stored/legacy value can raise the cap.
+      const myBudget = safeBudget(budget);
       if (totalSpent > myBudget) {
         throw new Error(
-          `Squad exceeds your available budget: ${formatMoney(myBudget)}.`,
+          `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(myBudget)}.`,
         );
       }
     } catch (err) {

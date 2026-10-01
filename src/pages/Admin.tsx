@@ -1124,56 +1124,27 @@ function UsersTab() {
     profilePic: string | null;
     role: string | null;
     budget: number | null;
-    customBudget: number | null;
   }>;
   const usersLoading = usersResult === undefined;
   const updateUser = useMutation(api.usersAdmin.updateUser);
   const requestPasswordReset = useMutation(api.usersAdmin.requestPasswordReset);
-  const setUserBudget = useMutation(api.usersAdmin.setUserBudget);
   const deleteUser = useMutation(api.usersAdmin.deleteUserWithCascade);
   const { user: me } = useAuth();
 
   const [editingId, setEditingId] = useState<Id<"users"> | null>(null);
   const [editTeam, setEditTeam] = useState("");
-  const [editBudget, setEditBudget] = useState("");
   const [resetFor, setResetFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  // Server-generated temporary password, shown once and never stored anywhere.
+  const [tempPassword, setTempPassword] = useState<{ username: string | null; value: string } | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // ── Budget override (Super Admin) ──
-  const [budgetFor, setBudgetFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
-  const [budgetInput, setBudgetInput] = useState("");
-  const [budgetBusy, setBudgetBusy] = useState(false);
 
   // ── Delete user with cascade (Super Admin) ──
   const [deleteFor, setDeleteFor] = useState<{ id: Id<"users">; username: string | null } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  const openBudget = (u: { _id: Id<"users">; username: string | null; budget: number | null; customBudget: number | null }) => {
-    setBudgetFor({ id: u._id, username: u.username });
-    const current = u.customBudget ?? u.budget;
-    setBudgetInput(current != null ? formatMoney(current) : "");
-  };
-
-  const handleSetBudget = async () => {
-    if (!budgetFor) return;
-    // Defensive numeric parse — nothing non-numeric ever reaches the backend.
-    const parsed = parseMoneyInput(budgetInput);
-    if (parsed === null || parsed < 0) {
-      toast.error('Invalid budget — use e.g. "60m", "75m" or "75000000".');
-      return;
-    }
-    setBudgetBusy(true);
-    try {
-      await setUserBudget({ userId: budgetFor.id, budget: parsed });
-      toast.success(`Budget for @${budgetFor.username ?? "user"} set to ${formatMoney(parsed)}.`);
-      setBudgetFor(null);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not set the budget.");
-    } finally {
-      setBudgetBusy(false);
-    }
-  };
+  // Budgets are a fixed $70m for every manager — there is nothing to override.
+  const FIXED_BUDGET = 70_000_000;
 
   const handleDeleteUser = async () => {
     if (!deleteFor) return;
@@ -1191,22 +1162,18 @@ function UsersTab() {
     }
   };
 
-  const startEdit = (u: { _id: Id<"users">; teamName: string | null; budget: number | null }) => {
+  const startEdit = (u: { _id: Id<"users">; teamName: string | null }) => {
     setEditingId(u._id);
     setEditTeam(u.teamName ?? "");
-    setEditBudget(u.budget != null ? formatMoney(u.budget) : "");
   };
 
   const saveEdit = async () => {
     if (!editingId) return;
     setBusy(true);
     try {
-      const parsed = editBudget.trim() ? parseMoneyInput(editBudget) : null;
-      if (editBudget.trim() && parsed === null) throw new Error("Invalid budget amount.");
       await updateUser({
         userId: editingId,
         teamName: editTeam.trim(),
-        budget: parsed ?? undefined,
       });
       toast.success("User updated.");
       setEditingId(null);
@@ -1219,18 +1186,33 @@ function UsersTab() {
 
   const handleReset = async () => {
     if (!resetFor) return;
-    if (newPassword.length < 4) {
+    // Defensive client-side parse: never send a malformed credential.
+    const trimmed = newPassword.trim();
+    if (trimmed !== "" && trimmed.length < 4) {
       toast.error("New password must be at least 4 characters.");
       return;
     }
     setBusy(true);
     try {
-      await requestPasswordReset({ userId: resetFor.id, newPassword });
-      toast.success(`Password reset for @${resetFor.username}. Their sessions were signed out.`);
+      const res = await requestPasswordReset({
+        userId: resetFor.id,
+        newPassword: trimmed === "" ? undefined : trimmed,
+      });
+      if (res?.temporaryPassword) {
+        setTempPassword({ username: resetFor.username, value: res.temporaryPassword });
+        toast.success(`Temporary password generated for @${resetFor.username}.`);
+      } else {
+        toast.success(`Password reset for @${resetFor.username}. Their sessions were signed out.`);
+      }
       setResetFor(null);
       setNewPassword("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reset password.");
+      // Generic, safe toast — no unhandled rejection, UI stays intact.
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not reset the password — please try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -1243,7 +1225,8 @@ function UsersTab() {
           <Users2 className="text-primary size-4" /> User management
         </CardTitle>
         <CardDescription>
-          Edit team names, adjust individual budgets and reset passwords for any manager.
+          Edit team names, reset passwords and delete accounts. Every manager shares the
+          same fixed $70m starting budget — it is not editable.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1280,12 +1263,8 @@ function UsersTab() {
                       <Input value={editTeam} onChange={(e) => setEditTeam(e.target.value)} className="h-8" />
                     </TableCell>
                     <TableCell className="text-xs">{u.role}</TableCell>
-                    <TableCell>
-                      <Input
-                        value={editBudget}
-                        onChange={(e) => setEditBudget(e.target.value)}
-                        className="h-8 w-24 text-right"
-                      />
+                    <TableCell className="text-right font-score text-xs text-muted-foreground">
+                      {formatMoney(FIXED_BUDGET)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -1321,31 +1300,12 @@ function UsersTab() {
                       )}
                     </TableCell>
                     <TableCell className="text-right font-score font-bold">
-                      {u.budget != null ? (
-                        <span className="inline-flex items-center gap-1">
-                          {formatMoney(u.budget)}
-                          {u.customBudget != null && (
-                            <Badge variant="outline" className="px-1 py-0 text-[9px] uppercase">
-                              custom
-                            </Badge>
-                          )}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
+                      {formatMoney(FIXED_BUDGET)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button size="sm" variant="ghost" onClick={() => startEdit(u)} title="Edit">
                           <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          title="Budget override"
-                          onClick={() => openBudget(u)}
-                        >
-                          <Wallet className="size-3.5" />
                         </Button>
                         <Button
                           size="sm"
@@ -1379,18 +1339,29 @@ function UsersTab() {
         {resetFor && (
           <div className="mt-4 rounded-xl border border-primary/40 bg-primary/5 p-4">
             <p className="text-sm font-semibold">
-              Set a new password for <span className="text-primary">@{resetFor.username}</span>
+              Reset access for <span className="text-primary">@{resetFor.username}</span>
+            </p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Passwords are stored as one-way scrypt hashes — the original can never be read
+              back, by anyone. Leave the field blank to generate a strong temporary password,
+              or type your own to set a specific one.
             </p>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row">
               <Input
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="New password (min 4 characters)"
+                placeholder="Blank = generate a temporary password"
                 type="text"
+                autoComplete="off"
                 className="sm:max-w-xs"
               />
               <Button onClick={handleReset} disabled={busy}>
-                <KeyRound className="mr-1.5 size-4" /> Reset password
+                {busy ? (
+                  <Loader2 className="mr-1.5 size-4 animate-spin" />
+                ) : (
+                  <KeyRound className="mr-1.5 size-4" />
+                )}
+                Reset password
               </Button>
               <Button variant="ghost" onClick={() => setResetFor(null)}>
                 Cancel
@@ -1402,55 +1373,40 @@ function UsersTab() {
           </div>
         )}
 
-        {/* Budget override dialog */}
-        <Dialog
-          open={budgetFor !== null}
-          onOpenChange={(open) => {
-            if (!open) setBudgetFor(null);
-          }}
-        >
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Wallet className="text-primary size-4" /> Budget override
-              </DialogTitle>
-              <DialogDescription>
-                Independently set{' '}
-                <span className="text-foreground font-semibold">@{budgetFor?.username ?? "user"}</span>'s
-                budget (e.g. $60m or $75m) while the global default stays unchanged. Squad
-                validation uses this value immediately.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-1.5">
-              <Label htmlFor="override-budget">New budget</Label>
-              <Input
-                id="override-budget"
-                value={budgetInput}
-                onChange={(e) => setBudgetInput(e.target.value)}
-                placeholder='e.g. "60m", "75m" or "75000000"'
-                autoFocus
-              />
-              {budgetInput.trim() !== "" && parseMoneyInput(budgetInput) === null && (
-                <p className="text-destructive text-xs">
-                  Invalid amount — use 60m, 75m, 850k or a plain number.
-                </p>
-              )}
+        {/* Generated temporary password — shown once, never stored */}
+        {tempPassword && (
+          <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-400/10 p-4">
+            <p className="text-sm font-semibold text-amber-200">
+              Temporary password for @{tempPassword.username}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="font-mono text-base font-bold tracking-wider text-amber-100">
+                {tempPassword.value}
+              </code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  try {
+                    void navigator.clipboard?.writeText(tempPassword.value);
+                    toast.success("Copied to clipboard.");
+                  } catch {
+                    toast.error("Could not copy — select and copy it manually.");
+                  }
+                }}
+              >
+                Copy
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setTempPassword(null)}>
+                Done
+              </Button>
             </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setBudgetFor(null)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSetBudget} disabled={budgetBusy || parseMoneyInput(budgetInput) === null}>
-                {budgetBusy ? (
-                  <Loader2 className="mr-1.5 size-4 animate-spin" />
-                ) : (
-                  <Wallet className="mr-1.5 size-4" />
-                )}
-                Set budget
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <p className="mt-2 text-xs text-amber-200/80">
+              Copy it now — it is not saved anywhere and cannot be shown again. Share it with
+              the manager over a private channel and ask them to change it after signing in.
+            </p>
+          </div>
+        )}
 
         {/* Delete-user confirmation (cascade warning) */}
         <Dialog
@@ -1495,33 +1451,12 @@ function UsersTab() {
 
 function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
   const config = useQuery(api.config.getConfig);
-  const setBudget = useMutation(api.config.setBudget);
+  const FIXED_BUDGET = 70_000_000;
   const setHouseLimit = useMutation(api.config.setHouseLimit);
   const setHouseLogo = useMutation(api.houses.setHouseLogo);
 
-  const [budgetInput, setBudgetInput] = useState<string | null>(null);
   const [houseLimit, setHouseLimitLocal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const budgetValue = budgetInput ?? (config ? formatMoney(config.budget) : "");
-
-  const handleBudget = async () => {
-    const parsed = parseMoneyInput(budgetInput ?? "");
-    if (parsed === null) {
-      toast.error('Enter a valid budget, e.g. "70m" or "70000000".');
-      return;
-    }
-    setBusy(true);
-    try {
-      await setBudget({ budget: parsed });
-      toast.success(`Global starting budget set to ${formatMoney(parsed)}.`);
-      setBudgetInput(null);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not set budget.");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const handleHouseLimit = async (limit: number) => {
     setBusy(true);
@@ -1572,26 +1507,22 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
             Global budget
           </CardTitle>
           <CardDescription>
-            The starting budget every manager builds their 7-a-side squad within.
+            Every manager builds their 7-a-side squad within the same fixed budget.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-end gap-2">
-            <div className="grid flex-1 gap-1.5">
-              <Label htmlFor="global-budget">Starting budget</Label>
-              <Input
-                id="global-budget"
-                value={budgetValue}
-                onChange={(e) => setBudgetInput(e.target.value)}
-                placeholder='e.g. "70m" or "70000000"'
-              />
+          <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-secondary/40 px-4 py-3">
+            <Wallet className="text-primary size-5 shrink-0" />
+            <div>
+              <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                Starting budget (fixed)
+              </p>
+              <p className="font-score text-xl font-bold">{formatMoney(FIXED_BUDGET)}</p>
             </div>
-            <Button onClick={handleBudget} disabled={busy || !config}>
-              <Save className="mr-1.5 size-4" /> Save
-            </Button>
           </div>
           <p className="text-muted-foreground text-xs">
-            Current: {config ? formatMoney(config.budget) : "…"}
+            This is the tournament-wide cap for every manager — it is not editable and there are
+            no per-user overrides.
           </p>
 
           <div className="grid gap-1.5 pt-2">

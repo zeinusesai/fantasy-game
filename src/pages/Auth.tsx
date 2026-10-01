@@ -85,11 +85,24 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       }
       navigate(redirect, { replace: true });
     } catch (err) {
+      // Generic, account-existence-safe messaging: any credential failure maps
+      // to the same string, so a wrong username can't be told apart from a
+      // wrong password. Validation errors thrown above still pass through.
+      const raw = err instanceof Error ? err.message : "";
+      const isCredentialFailure =
+        /invalid credentials|invalid username|invalid password|user not found|no user/i.test(
+          raw,
+        );
       setError(
-        err instanceof Error
-          ? err.message.replace(/^Invalid credentials:?\s*/i, "Wrong username or password.")
-          : "Something went wrong. Please try again.",
+        isCredentialFailure
+          ? "Invalid username or password."
+          : raw.trim() !== ""
+            ? raw
+            : "Something went wrong. Please try again.",
       );
+      // Keep the form fully usable after a failure — clear only the password
+      // so a typo can be corrected without retyping the username.
+      setPassword("");
       setIsLoading(false);
     }
   };
