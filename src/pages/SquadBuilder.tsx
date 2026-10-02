@@ -31,7 +31,9 @@ import {
   DEFAULT_FORMATION,
   FORMATION_PRESETS,
   formationBlurb,
+  formationFullLabel,
   formationShape,
+  formationShapeSummary,
   inferFormation,
   resolveFormation,
 } from "@/convex/formations";
@@ -413,7 +415,7 @@ export default function SquadBuilder() {
   if (selected.length > 7) problems.push("You have more than 7 players — remove some.");
   if (!formationComplete && selected.length === 7) {
     problems.push(
-      `${resolveFormation(formation)} needs ${currentShape.GK} GK, ${currentShape.DEF} DEF, ${currentShape.MID} MID, ${currentShape.FWD} FWD (you have ${positionCounts.GK} GK, ${positionCounts.DEF} DEF, ${positionCounts.MID} MID, ${positionCounts.FWD} FWD).`,
+      `Your squad does not match the chosen ${formationFullLabel(formation)} formation — needs ${formationShapeSummary(formation)} (you have ${positionCounts.GK} GK / ${positionCounts.DEF} DEF / ${positionCounts.MID} MID / ${positionCounts.FWD} FWD).`,
     );
   }
   if (houseLimitBroken) {
@@ -446,13 +448,30 @@ export default function SquadBuilder() {
     }
     setSaving(true);
     try {
-      await saveSquad({ playerIds: selected, captainId, formation: resolveFormation(formation) });
-      toast.success(`Squad saved as a ${resolveFormation(formation)}! Good luck, manager.`);
+      // The server returns `{ ok, error }` instead of throwing, so an invalid
+      // squad is toasted here without any server exception being raised.
+      const result = await saveSquad({
+        playerIds: selected,
+        captainId,
+        formation: resolveFormation(formation),
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      setFormation(resolveFormation(result.formation));
+      toast.success(
+        `Squad saved as a ${formationFullLabel(result.formation)}! Good luck, manager.`,
+      );
       // Legal squad saved — the budget-reset guidance has done its job.
       setBudgetResetMode(false);
     } catch (err) {
-      // Server errors already arrive as friendly human-readable messages.
-      toast.error(err instanceof Error ? err.message : "Could not save squad.");
+      // Only a genuinely unexpected failure reaches here (e.g. offline).
+      toast.error(
+        err instanceof Error && err.message.length > 0
+          ? err.message
+          : "Could not save squad — please try again.",
+      );
     } finally {
       setSaving(false);
     }
@@ -525,7 +544,10 @@ export default function SquadBuilder() {
                 )}
               </h1>
               <p className="text-muted-foreground text-sm">
-                7 starters · 1 GK / 2 DEF / 2 MID / 2 FWD · max {houseLimit} per house · within budget
+                {/* Dynamic — always reflects the active formation, never a
+                    hardcoded 2/2/2 shape. */}
+                7 starters · {formationShapeSummary(formation)} · max {houseLimit} per house
+                · within budget
               </p>
               {readOnly && editableSquads === false && (
                 <p className="text-destructive mt-1.5 text-xs">
@@ -628,7 +650,9 @@ export default function SquadBuilder() {
                 <p className="font-score text-2xl font-bold">
                   {positionCounts.GK}-{positionCounts.DEF}-{positionCounts.MID}-{positionCounts.FWD}
                 </p>
-                <p className="text-muted-foreground mt-1 text-xs">needs 1-2-2-2</p>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  needs {formationFullLabel(formation)}
+                </p>
               </CardContent>
             </Card>
             <Card className="border-border/80">
@@ -737,9 +761,8 @@ export default function SquadBuilder() {
                     })}
                   </div>
                   <p className="text-muted-foreground mt-2 text-[11px] leading-snug">
-                    {resolveFormation(formation)} · {formationBlurb(formation)} — needs{" "}
-                    {currentShape.GK} GK, {currentShape.DEF} DEF, {currentShape.MID} MID,{" "}
-                    {currentShape.FWD} FWD.
+                    {formationFullLabel(formation)} · {formationBlurb(formation)} — needs{" "}
+                    {formationShapeSummary(formation)}.
                   </p>
                 </CardContent>
               </Card>

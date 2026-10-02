@@ -7,70 +7,24 @@ import { transferLockReason } from "./gameweekStructure";
 import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
 import { stageValidator } from "./schema";
 import {
-  FORMATION_PRESETS,
-  LEGACY_SHAPE,
-  formationMatches,
-  inferFormation,
-  isFormationId,
   resolveFormation,
+  validateSquadShape,
 } from "./formations";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
-/** Human list of the legal 7-a-side shapes, e.g. "2-3-1, 3-2-1, …". */
-const FORMATION_CHOICES = FORMATION_PRESETS.map((p) => p.id).join(", ");
-
 /**
- * Validate a 7-player selection against the manager's chosen formation and
- * return the formation id to store.
- *
- * Defensive by design:
- *  - An explicit, recognised choice is honoured, and a mismatch is reported
- *    with the shape the picks actually form.
- *  - A MISSING / unknown / legacy formation string (e.g. a stale cached
- *    client that predates formations) is never rejected — the shape is
- *    inferred from the picks instead, with the original 1-2-2-2 rule kept as
- *    a last-resort fallback so pre-formations squads stay saveable.
+ * Shape check for a seven-player selection. Delegates to the shared
+ * `validateSquadShape` validator, which is a TOTAL function — it never throws
+ * for any input, so a bad squad can never escape as an unhandled server
+ * exception. Returns the formation id to store, or a clean message.
  */
 function resolveSquadFormation(
   counts: Record<"GK" | "DEF" | "MID" | "FWD", number>,
   requested?: string | null,
-): string {
-  const isLegacyShape =
-    counts.GK === LEGACY_SHAPE.GK &&
-    counts.DEF === LEGACY_SHAPE.DEF &&
-    counts.MID === LEGACY_SHAPE.MID &&
-    counts.FWD === LEGACY_SHAPE.FWD;
-  const illegal = () => {
-    const picked = (Object.keys(counts) as Array<keyof typeof counts>)
-      .filter((k) => counts[k] > 0)
-      .map((k) => `${counts[k]} × ${k}`)
-      .join(" · ");
-    return new Error(
-      `Illegal formation (${picked || "no players"}). Pick a valid 7-a-side shape: ${FORMATION_CHOICES}.`,
-    );
-  };
-
-  // No usable explicit choice → accept whatever legal shape the picks form.
-  if (!isFormationId(typeof requested === "string" ? requested.trim() : "")) {
-    const inferredLoose = inferFormation(counts);
-    if (inferredLoose) return inferredLoose;
-    if (isLegacyShape) return "2-2-2";
-    throw illegal();
-  }
-
-  const chosen = resolveFormation(requested);
-  if (formationMatches(counts, chosen)) return chosen;
-
-  // An explicit choice that the picks do not satisfy is a real mistake.
-  const inferred = inferFormation(counts);
-  if (inferred) {
-    throw new Error(
-      `Your picks form a ${inferred}, not a ${chosen}. Switch the formation or adjust your 7.`,
-    );
-  }
-  if (isLegacyShape) return "2-2-2";
-  throw illegal();
+): { formation: string } | { error: string } {
+  const result = validateSquadShape(counts, requested);
+  return result.ok ? { formation: result.formation } : { error: result.message };
 }
 
 export type SquadPlayer = Doc<"players">;
@@ -424,19 +378,36 @@ export const saveSquad = mutation({
     // Chosen 7-a-side shape, e.g. "2-3-1". Omitted → inferred from the picks.
     formation: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    // Outer catch-all: ANY unexpected failure (db hiccup, feed write, stale
-    // client payload) surfaces as a friendly message for the client toast
-    // instead of a raw Convex server exception. Known validation Errors
-    // rethrow untouched so their specific guidance survives.
+  handler: async (ctx, args): Promise<SaveSquadResult> => {
+    // ZERO-THROW contract: an invalid squad (wrong shape, over budget, house
+    // limit, transfers locked) is an EXPECTED outcome, so it is RETURNED as
+    // `{ ok: false, error }` and toasted by the client. Nothing a manager can
+    // send can surface as an unhandled `CONVEX M(squads:saveSquad)` server
+    // exception any more.
     try {
       return await saveSquadInner(ctx, args);
     } catch (err) {
-      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
-      throw new Error("Could not save your squad — please refresh the page and try again.");
+      // Genuinely unexpected (db hiccup, feed write, stale payload) still
+      // degrades to a readable message rather than a raw server error.
+      if (
+        err instanceof Error &&
+        err.message.length > 0 &&
+        !err.message.startsWith("Uncaught")
+      ) {
+        return { ok: false, error: err.message };
+      }
+      return {
+        ok: false,
+        error: "Could not save your squad — please refresh the page and try again.",
+      };
     }
   },
 });
+
+/** Result of saveSquad — always resolves; never rejects for an expected error. */
+export type SaveSquadResult =
+  | { ok: true; squadId: Id<"squads">; formation: string }
+  | { ok: false; error: string };
 
 /** Body of saveSquad, split out so the wrapper can add the friendly catch. */
 async function saveSquadInner(
@@ -446,7 +417,7 @@ async function saveSquadInner(
     captainId: Id<"players">;
     formation?: string;
   },
-): Promise<Id<"squads">> {
+): Promise<SaveSquadResult> {
   const user = await requireUser(ctx);
   const { houseLimit } = await getPlatformConfig(ctx);
 
@@ -463,13 +434,13 @@ async function saveSquadInner(
       : null;
 
   if (playerIds.length !== 7) {
-    throw new Error(`Pick exactly 7 players (currently ${playerIds.length}).`);
+    return { ok: false, error: `Pick exactly 7 players (currently ${playerIds.length}).` };
   }
   if (new Set(playerIds).size !== playerIds.length) {
-    throw new Error("You cannot pick the same player twice.");
+    return { ok: false, error: "You cannot pick the same player twice." };
   }
   if (captainId === null || !playerIds.includes(captainId)) {
-    throw new Error("Your captain must be one of your 7 starters.");
+    return { ok: false, error: "Your captain must be one of your 7 starters." };
   }
 
   // Safe record fetching: a well-formed id can still point at a player that
@@ -477,13 +448,17 @@ async function saveSquadInner(
   // lookup degrades to null and is caught by the existence check below.
   const players = await Promise.all(playerIds.map((id) => ctx.db.get(id).catch(() => null)));
   if (players.some((p) => !p || !p.active)) {
-    throw new Error(
-      "One or more selected players could not be found. Refresh the player list and try again.",
-    );
+    return {
+      ok: false,
+      error:
+        "One or more selected players could not be found. Refresh the player list and try again.",
+    };
   }
 
-    // Formation: 1 GK and 6 outfield players matching the manager's chosen
-    // 7-a-side shape (2-3-1 default; 3-2-1 / 2-2-2 / 1-3-2 / 3-1-2 also valid).
+    // Formation: DYNAMIC, never hardcoded. The universal platform rule is
+    // exactly 1 GK + 6 outfielders; the outfield split is then compared against
+    // the CHOSEN formation's own shape (resolved from the string, so "2-3-1"
+    // and "1-2-3-1" are the same shape).
     const counts: Record<"GK" | "DEF" | "MID" | "FWD", number> = {
       GK: 0,
       DEF: 0,
@@ -491,7 +466,12 @@ async function saveSquadInner(
       FWD: 0,
     };
     for (const p of players) if (p) counts[p.position] += 1;
-    const formation = resolveSquadFormation(counts, args.formation);
+    const shapeResult = resolveSquadFormation(counts, args.formation);
+    if (!("formation" in shapeResult)) {
+      // Clean, human-readable message — returned, never thrown.
+      return { ok: false, error: shapeResult.error };
+    }
+    const storedFormation = shapeResult.formation;
 
     // House limit
     const houseCounts = new Map<string, number>();
@@ -501,9 +481,10 @@ async function saveSquadInner(
     }
     for (const [house, count] of houseCounts) {
       if (count > houseLimit) {
-        throw new Error(
-          `House limit exceeded: max ${houseLimit} players from ${house} (you picked ${count}).`,
-        );
+        return {
+          ok: false,
+          error: `House limit exceeded: max ${houseLimit} players from ${house} (you picked ${count}).`,
+        };
       }
     }
 
@@ -548,8 +529,14 @@ async function saveSquadInner(
         }
       }
     } catch (err) {
-      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
-      throw new Error("Could not validate your squad budget — please try again.");
+      if (
+        err instanceof Error &&
+        err.message.length > 0 &&
+        !err.message.startsWith("Uncaught")
+      ) {
+        return { ok: false, error: err.message };
+      }
+      return { ok: false, error: "Could not validate your squad budget — please try again." };
     }
 
     const existing = await getSquadForUser(ctx, user._id);
@@ -568,7 +555,10 @@ async function saveSquadInner(
         // Master switch: the Super Admin can lock the Squad Builder for
         // everyone, independent of any gameweek deadline.
         if (settings.editableSquads === false) {
-          throw new Error("The Super Admin has locked the squad builder platform-wide.");
+          return {
+            ok: false,
+            error: "The Super Admin has locked the squad builder platform-wide.",
+          };
         }
         const gwRows = await ctx.db.query("gameweeks").collect();
         const byStage: Record<
@@ -584,9 +574,14 @@ async function saveSquadInner(
           };
         }
         const reason = transferLockReason(byStage);
-        if (reason) throw new Error(reason);
+        if (reason) return { ok: false, error: reason };
       }
-      await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent, formation });
+      await ctx.db.patch(existing._id, {
+        playerIds,
+        captainId,
+        totalSpent,
+        formation: storedFormation,
+      });
       // Activity feed: transfer made (defensive, non-fatal).
       if (change) {
         try {
@@ -612,14 +607,14 @@ async function saveSquadInner(
           // feed failure is non-fatal
         }
       }
-      return existing._id;
+      return { ok: true, squadId: existing._id, formation: storedFormation };
     }
     const newId = await ctx.db.insert("squads", {
       userId: user._id,
       playerIds,
       captainId,
       totalSpent,
-      formation,
+      formation: storedFormation,
     });
     try {
       await ctx.runMutation(internal.activity.logActivity, {
@@ -630,7 +625,7 @@ async function saveSquadInner(
     } catch {
       // feed failure is non-fatal
     }
-    return newId;
+    return { ok: true, squadId: newId, formation: storedFormation };
 }
 
 /**

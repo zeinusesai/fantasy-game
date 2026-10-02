@@ -12,6 +12,7 @@ import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./admin
 import {
   formationMatches,
   formationShape,
+  validateSquadShape,
   inferFormation,
   isFormationId,
   resolveFormation,
@@ -416,11 +417,11 @@ export const forceSaveSquad = mutation({
       const docs = await Promise.all(playerIds.map((id) => ctx.db.get(id)));
       if (docs.some((p) => !p)) throw new Error("One of those players no longer exists.");
 
-      // Formation-aware: honour the admin's chosen shape, otherwise infer it
-      // from the picked positions. A missing / unknown string is never
-      // rejected — resolveFormation collapses it to 2-3-1 and the infer
-      // branch below accepts whatever legal shape the picks actually form, so
-      // a legacy 1-2-2-2 squad can still be force-saved.
+      // Formation-aware and DYNAMIC — no hardcoded 2/2/2 rule. The same shared
+      // validator `saveSquad` uses: universal 1 GK + 6 outfielders first, then
+      // the outfield split compared against the chosen formation's own shape.
+      // A missing / unknown string is never rejected — the shape is inferred
+      // from the picks, so a legacy squad can still be force-saved.
       const counts: Record<"GK" | "DEF" | "MID" | "FWD", number> = {
         GK: 0,
         DEF: 0,
@@ -428,29 +429,11 @@ export const forceSaveSquad = mutation({
         FWD: 0,
       };
       for (const p of docs) if (p) counts[p.position] += 1;
-      const legacy = counts.GK === 1 && counts.DEF === 2 && counts.MID === 2 && counts.FWD === 2;
-      const inferred = inferFormation(counts);
-      let storedFormation: string;
-      if (isFormationId(typeof formation === "string" ? formation.trim() : "")) {
-        const chosen = resolveFormation(formation);
-        if (formationMatches(counts, chosen)) {
-          storedFormation = chosen;
-        } else if (inferred) {
-          throw new Error(`Those players form a ${inferred}, not a ${chosen}.`);
-        } else if (legacy) {
-          storedFormation = "2-2-2";
-        } else {
-          const shape = formationShape(chosen);
-          throw new Error(
-            `Illegal formation: needs ${shape.GK} GK, ${shape.DEF} DEF, ${shape.MID} MID, ${shape.FWD} FWD for a ${chosen}.`,
-          );
-        }
-      } else {
-        // No usable explicit choice — infer, with the legacy rule as fallback.
-        if (inferred) storedFormation = inferred;
-        else if (legacy) storedFormation = "2-2-2";
-        else throw new Error("Illegal formation: that set of seven is not a valid shape.");
+      const shapeResult = validateSquadShape(counts, formation);
+      if (!shapeResult.ok) {
+        throw new Error(shapeResult.message);
       }
+      const storedFormation = shapeResult.formation;
 
       const cap = captainId ?? playerIds[0];
       if (!playerIds.includes(cap)) {

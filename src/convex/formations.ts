@@ -60,7 +60,25 @@ export const FORMATION_PRESETS: readonly FormationPreset[] = [
 
 /** Legacy fixed tournament shape → its modern equivalent. */
 export const LEGACY_FORMATION = "1-2-2-2";
-const ALIASES: Record<string, string> = { [LEGACY_FORMATION]: "2-2-2" };
+
+/**
+ * Every accepted spelling → its canonical preset id.
+ *
+ * Formations are written two ways in the wild:
+ *  - "DEF-MID-FWD" with the goalkeeper implied (the pitch chips), and
+ *  - "GK-DEF-MID-FWD", the full four-number form football fans expect.
+ *
+ * Both resolve to the SAME preset id, so `1-2-3-1` and `2-3-1` are the same
+ * shape and can never disagree server-side vs client-side.
+ */
+const ALIASES: Record<string, string> = {
+  // Full GK-DEF-MID-FWD labels → the implied-GK preset ids.
+  "1-2-3-1": "2-3-1",
+  "1-2-2-2": "2-2-2",
+  "1-3-2-1": "3-2-1",
+  "1-1-3-2": "1-3-2",
+  "1-3-1-2": "3-1-2",
+};
 
 const PRESET_BY_ID = new Map<string, FormationShape>(
   FORMATION_PRESETS.map((p) => [p.id, p.shape] as const),
@@ -72,6 +90,33 @@ export const LEGACY_SHAPE: FormationShape = { GK: 1, DEF: 2, MID: 2, FWD: 2 };
 /** True only for a known preset id (aliases excluded). */
 export function isFormationId(value: unknown): boolean {
   return typeof value === "string" && PRESET_BY_ID.has(value);
+}
+
+/**
+ * True for a RECOGNISED formation string — either the canonical "2-3-1" form
+ * or the full "1-2-3-1" form. Never throws on any input.
+ */
+export function isKnownFormation(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return PRESET_BY_ID.has(trimmed) || ALIASES[trimmed] !== undefined;
+}
+
+/**
+ * The full four-number label, e.g. "2-3-1" → "1-2-3-1". Used everywhere a
+ * manager reads the shape (headers, cards, error copy) so the goalkeeper is
+ * never silently implied from the label they see.
+ */
+export function formationFullLabel(value?: string | null): string {
+  const s = formationShape(value);
+  return `${s.GK}-${s.DEF}-${s.MID}-${s.FWD}`;
+}
+
+/** "1 GK / 2 DEF / 3 MID / 1 FWD" — the shape in plain words. */
+export function formationShapeSummary(value?: string | null): string {
+  const s = formationShape(value);
+  return `${s.GK} GK / ${s.DEF} DEF / ${s.MID} MID / ${s.FWD} FWD`;
 }
 
 /**
@@ -156,6 +201,88 @@ export function formationMatches(
     Number(counts.MID ?? 0) === shape.MID &&
     Number(counts.FWD ?? 0) === shape.FWD
   );
+}
+
+/** Outcome of `validateSquadShape` — always one of these, never an exception. */
+export type SquadShapeResult =
+  | { ok: true; formation: string }
+  | { ok: false; message: string };
+
+/** Safe position count: junk / negative / NaN collapses to 0. */
+function countOf(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * Validate a seven-player selection against the manager's chosen formation.
+ *
+ * TOTAL FUNCTION — it NEVER throws, for any input. Callers get a plain result
+ * object they can turn into a toast, so an invalid squad can never surface as
+ * an unhandled `CONVEX M(squads:saveSquad)` server exception.
+ *
+ * Rules, in order:
+ *  1. UNIVERSAL: exactly 1 goalkeeper and 6 outfielders. This holds for every
+ *     7-a-side shape on the platform, so it is checked first and its copy
+ *     never mentions a specific formation.
+ *  2. DYNAMIC: the outfield split must equal the chosen formation's shape —
+ *     computed from the formation string, never hardcoded. Both the "2-3-1"
+ *     and "1-2-3-1" spellings resolve to the same shape.
+ *  3. A missing / unrecognised formation string is never fatal: the shape is
+ *     inferred from the picks instead, so a stale cached client still saves.
+ */
+export function validateSquadShape(
+  counts: Partial<Record<Position, number>> | null | undefined,
+  requested?: string | null,
+): SquadShapeResult {
+  const gk = countOf(counts?.GK);
+  const def = countOf(counts?.DEF);
+  const mid = countOf(counts?.MID);
+  const fwd = countOf(counts?.FWD);
+  const total = gk + def + mid + fwd;
+
+  // 1) Universal 7-a-side rule: 1 GK + 6 outfielders.
+  if (total !== 7 || gk !== 1) {
+    return {
+      ok: false,
+      message:
+        total !== 7
+          ? `Your squad must contain exactly 7 players (you have ${total}).`
+          : `Your squad must contain exactly 1 goalkeeper and 6 outfield players (you have ${gk} GK and ${total - gk} outfield).`,
+    };
+  }
+
+  // 2) / 3) Resolve the formation, honouring both label styles.
+  const wanted =
+    typeof requested === "string" ? requested.trim() : "";
+  const chosen = isKnownFormation(wanted) ? resolveFormation(wanted) : null;
+
+  if (chosen && formationMatches({ GK: gk, DEF: def, MID: mid, FWD: fwd }, chosen)) {
+    return { ok: true, formation: chosen };
+  }
+
+  // No usable explicit choice (missing / unknown / stale string) → infer from
+  // the picks so a legacy squad is never blocked from saving.
+  const inferred = inferFormation({ GK: gk, DEF: def, MID: mid, FWD: fwd });
+  if (!chosen && inferred) return { ok: true, formation: inferred };
+
+  // Mismatch copy, using the full GK-DEF-MID-FWD label the manager sees.
+  const reference = chosen ?? DEFAULT_FORMATION;
+  const shape = formationShape(reference);
+  const expected = `${shape.GK} GK / ${shape.DEF} DEF / ${shape.MID} MID / ${shape.FWD} FWD`;
+  const actual = `${gk} GK / ${def} DEF / ${mid} MID / ${fwd} FWD`;
+
+  if (inferred) {
+    return {
+      ok: false,
+      message: `Your squad does not match the chosen ${formationFullLabel(reference)} formation — needs ${expected}, but your picks form a ${formationFullLabel(inferred)} (you have ${actual}). Switch the formation or adjust your 7.`,
+    };
+  }
+  return {
+    ok: false,
+    message: `Your squad does not match the chosen ${formationFullLabel(reference)} formation — needs ${expected} (you have ${actual}).`,
+  };
 }
 
 /** One slot on the visual pitch: percentage coordinates + the position it covers. */
