@@ -3,7 +3,7 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { readUserCosmetics } from "./lib";
 import { getLeaderboardRows } from "./lib";
-import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle } from "./defaults";
+import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle, normalizeHouse } from "./defaults";
 import type { Doc, Id } from "./_generated/dataModel";
 
 /**
@@ -85,32 +85,16 @@ export const getPublicProfile = query({
         // A leaderboard hiccup must never hide a profile.
       }
 
-      // ── House tilt: the house they draft most often (null until they have
-      //    one squad). Ties resolve in Fire/Earth/Wind/Water order. ──
-      let favouriteHouse: string | null = null;
-      try {
-        const squad = await ctx.db
-          .query("squads")
-          .withIndex("by_user", (q) => q.eq("userId", userId))
-          .unique();
-        const players = squad
-          ? (await Promise.all(squad.playerIds.map((id) => ctx.db.get(id).catch(() => null))))
-          : [];
-        const tally = new Map<string, number>();
-        for (const p of players) {
-          if (!p || typeof p.house !== "string") continue;
-          tally.set(p.house, (tally.get(p.house) ?? 0) + 1);
-        }
-        let best = 0;
-        for (const [house, n] of tally) {
-          if (n > best) {
-            best = n;
-            favouriteHouse = house;
-          }
-        }
-      } catch {
-        favouriteHouse = null;
-      }
+      // ── House: the manager's MANUAL preference (users.supportedHouse).
+      //
+      //    This used to be tallied from squad composition, which meant a
+      //    manager's displayed house changed silently whenever they made a
+      //    transfer. It is now a stored choice only.
+      //
+      //    `normalizeHouse` is total: a null/unset value stays null, and a
+      //    value that is somehow not one of the four real houses (legacy or
+      //    hand-edited row) degrades to null instead of rendering garbage.
+      const supportedHouse = normalizeHouse(user.supportedHouse);
 
       // ── Pinned MVP player. The stored id may point at a deleted player or
       //    be a malformed string, so it is resolved defensively. ──
@@ -190,8 +174,14 @@ export const getPublicProfile = query({
           totalPoints,
           rank,
           managerCount,
-          favouriteHouse,
+          /**
+           * Kept under its original name so existing consumers (and the
+           * response shape) don't change, but it is now the stored
+           * preference rather than a derived tally. Null = not chosen yet.
+           */
+          favouriteHouse: supportedHouse,
         },
+        supportedHouse,
         favouritePlayer,
       };
     } catch {

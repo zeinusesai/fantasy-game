@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { HouseSelector } from "@/components/HouseSupport";
 import { formatMoney, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
@@ -223,6 +224,16 @@ export default function Profile() {
                 your MVP on your public profile card.
               </p>
             </div>
+
+            {/* ── Manual house preference ──
+                Saves on change via its own mutation call, so it is NOT part of
+                the form's single "Save profile" submit — the team name it must
+                send along is the live local value. */}
+            <HouseSelector
+              id="supported-house"
+              value={user?.supportedHouse ?? null}
+              teamName={teamName}
+            />
 
             {/* ── Social links (optional, unlinked = field absent) ── */}
             <div className="grid gap-2">

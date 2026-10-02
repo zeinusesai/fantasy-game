@@ -26,6 +26,7 @@ import {
 import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
+import { HouseSupportDot } from "@/components/HouseSupport";
 import { WagerDialog } from "@/components/WagerDialog";
 import { ProfileModal } from "@/components/ProfileModal";
 import { SkeletonList } from "@/components/Skeletons";
@@ -213,6 +214,7 @@ export default function Leaderboard() {
                           <span className="truncate text-sm font-semibold">
                             {row.teamName}
                           </span>
+                          <HouseSupportDot house={row.supportedHouse} />
                           <UserBadges
                             sizeClass="size-3.5"
                             role={row.role}
@@ -368,6 +370,10 @@ export default function Leaderboard() {
                           >
                             <span className="flex items-center gap-1.5">
                               {row.teamName}
+                              {/* Subtle manual house indicator. Renders
+                                  nothing when the manager hasn't chosen
+                                  one, so it never adds noise to the row. */}
+                              <HouseSupportDot house={row.supportedHouse} />
                               {/* Store cosmetic: custom manager title. */}
                               {row.customTitle ? (
                                 <span

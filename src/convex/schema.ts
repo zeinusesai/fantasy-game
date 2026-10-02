@@ -118,6 +118,20 @@ const schema = defineSchema(
       // the free tournament chip). Always clamped to >= 0 server-side.
       extraChips: v.optional(v.number()),
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
+      // The house this manager SUPPORTS — a purely cosmetic, MANUAL
+      // preference chosen from the profile settings panel.
+      //
+      // This is deliberately NOT derived from the squad. Previously the house
+      // was tallied across the seven picks and displayed as "their house",
+      // so a manager's identity silently changed whenever they made a
+      // transfer. A stored preference cannot drift.
+      //
+      // Optional + a `houseValidator` (not a free string), so the value can
+      // only ever be one of the four real houses. `undefined` means "not
+      // chosen yet", which the UI renders as a neutral state rather than
+      // silently defaulting to one. Only the profile editor writes this
+      // field — saveSquad never touches it.
+      supportedHouse: v.optional(houseValidator),
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
       .index("by_username", ["username"]),

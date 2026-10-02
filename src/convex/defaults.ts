@@ -7,8 +7,31 @@
 //   3. the scoring engine when no override is configured.
 //
 // Because both server and client import these constants, a missing or corrupt
-// config row can never produce a different value in the UI than in the
-// backend — there is exactly one definition of "default".
+// config row can never produce a different value in the UI than in the//   backend — there is exactly one definition of "default".
+
+/**
+ * Normalise a manager's manually-chosen supported house.
+ *
+ * Total function — never throws, always returns a real house or `null`:
+ *   • null / undefined / ""            -> null  ("no house chosen yet")
+ *   • " fire " / "FIRE"                -> "Fire" (case + whitespace tolerant)
+ *   • anything not in HOUSES           -> null  (a corrupt/legacy row
+ *     degrades to the neutral state instead of rendering a fake house)
+ *
+ * Because the UI also calls this, a value can never be displayed differently
+ * from the way it was validated.
+ */
+export function normalizeHouse(value: unknown): House | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim().toLowerCase();
+  if (raw === "") return null;
+  return HOUSES.find((h) => h.toLowerCase() === raw) ?? null;
+}
+
+/** Display label for a possibly-absent house. Never returns null. */
+export function houseLabel(house: unknown): string {
+  return normalizeHouse(house) ?? "No house";
+}
 
 import type { House, Position } from "./schema";
 import { HOUSES, POSITIONS } from "./schema";

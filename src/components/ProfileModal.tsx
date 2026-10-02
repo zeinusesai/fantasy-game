@@ -16,6 +16,11 @@ import { SOCIAL_HOSTS } from "@/convex/defaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { isPremiumPitch, normalizePitchTheme } from "@/lib/pitchTheme";
 import { UserBadges } from "@/components/UserBadge";
+import {
+  HouseSelector,
+  HouseSupportDot,
+  HouseSupportLabel,
+} from "@/components/HouseSupport";
 import { DirectMessageDialog } from "@/components/DirectMessages";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { useAuth } from "@/hooks/use-auth";
@@ -49,6 +54,8 @@ export type ProfileModalSubject = ProfileCosmetics & {
   totalPoints?: number | null;
   rank?: number | null;
   managerCount?: number | null;
+  /** Manual house preference; null/undefined = not chosen yet. */
+  supportedHouse?: string | null;
 };
 
 /**
@@ -125,6 +132,10 @@ export function ProfileModal({
   const cosmetics = profile?.cosmetics ?? null;
   const stats = profile?.stats ?? null;
   const mvp = profile?.favouritePlayer ?? null;
+  // The manual house preference. Falls back through the props so a profile
+  // that hasn't loaded yet still shows the value the caller already knows.
+  const supportedHouse =
+    profile?.supportedHouse ?? subject?.supportedHouse ?? null;
   const unlockedItems = cosmetics?.unlockedItems ?? [];
   const previewTitle = cosmetics?.customTitle ?? customTitle;
   const badgeMeta = profile?.badgeMeta ?? null;
@@ -199,6 +210,9 @@ export function ProfileModal({
             <span className="min-w-0">
               <span className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate">{teamName}</span>
+                {/* Subtle house indicator beside the name. Renders nothing
+                    when unset, so it never competes with the team name. */}
+                <HouseSupportDot house={supportedHouse} />
                 <UserBadges sizeClass="size-4" role={role} customBadge={customBadge} />
               </span>
               <span className="text-muted-foreground mt-0.5 block truncate text-xs font-normal">
@@ -212,6 +226,18 @@ export function ProfileModal({
               : `Manager profile${rank != null && managerCount > 0 ? ` · rank #${rank} of ${managerCount}` : ""}.`}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Self-only: the manual house picker. Rivals get the indicator in
+            the header but never a control to change someone else's house. */}
+        {isSelf && (
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <HouseSelector
+              id="profile-modal-house"
+              value={supportedHouse}
+              teamName={teamName}
+            />
+          </div>
+        )}
 
         {/* Cosmetic status chips + custom title & badge showcase. */}
         {(premium || golden || previewTitle || badgeMeta || unlockedItems.length > 0) && (
@@ -255,7 +281,9 @@ export function ProfileModal({
           </div>
         )}
 
-        {/* ── Achievements: points, rank, favourite house ── */}
+        {/* ── Achievements: points, rank, supported house ──
+            The house is the manager's MANUAL preference, never a squad
+            tally — so it cannot change when they edit their team. */}
         {stats && (
           <div className="grid grid-cols-3 gap-2 text-center">
             <MiniStat label="Points" value={String(stats.totalPoints ?? 0)} />
@@ -263,7 +291,10 @@ export function ProfileModal({
               label="Rank"
               value={stats.rank != null && stats.managerCount > 0 ? `#${stats.rank}` : "—"}
             />
-            <MiniStat label="House" value={stats.favouriteHouse ?? "—"} />
+            <MiniStat
+              label="House"
+              value={<HouseSupportLabel house={supportedHouse} />}
+            />
           </div>
         )}
 
@@ -398,7 +429,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-border/60 bg-secondary/30 px-2 py-1.5">
       <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">

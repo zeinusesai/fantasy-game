@@ -11,6 +11,8 @@ import {
 } from "./lib";
 
 import { cleanSocialHandle } from "./defaults";
+import { normalizeHouse } from "./defaults";
+import { HOUSES, type House } from "./schema";
 
 // ── Avatar uploads (Convex file storage) ─────────────────────────────────
 
@@ -164,8 +166,16 @@ export const updateProfile = mutation({
     favoritePlayerId: v.optional(v.string()),
     instagram: v.optional(v.string()),
     tiktok: v.optional(v.string()),
+    /**
+     * Manual house preference. Typed as a plain optional STRING rather than
+     * `houseValidator` so a stale/buggy client that sends "Bl ue" gets a
+     * readable error ("Unsupported house ... pick Fire, Earth, Wind or
+     * Water.") instead of an opaque ArgumentValidationError. Validated
+     * against the real list below.
+     */
+    supportedHouse: v.optional(v.string()),
   },
-  handler: async (ctx, { teamName, avatar, favoritePlayerId, instagram, tiktok }) => {
+  handler: async (ctx, { teamName, avatar, favoritePlayerId, instagram, tiktok, supportedHouse }) => {
     let user;
     try {
       user = await requireUser(ctx);
@@ -184,6 +194,25 @@ export const updateProfile = mutation({
     const instagramHandle = instagram !== undefined ? cleanSocialHandle(instagram) : undefined;
     const tiktokHandle = tiktok !== undefined ? cleanSocialHandle(tiktok) : undefined;
 
+    // House preference: a blank value CLEARS it (patching undefined removes
+    // the field), any other value must be one of the four real houses.
+    // Case/whitespace tolerant so " fire " is accepted from a sloppy client.
+    let housePatch: { supportedHouse?: House } | null = null;
+    if (supportedHouse !== undefined) {
+      const raw = supportedHouse.trim();
+      if (raw === "") {
+        housePatch = { supportedHouse: undefined };
+      } else {
+        const match = HOUSES.find((h) => h.toLowerCase() === raw.toLowerCase());
+        if (!match) {
+          throw new Error(
+            `"${raw}" is not a house. Supported house must be one of: ${HOUSES.join(", ")}.`,
+          );
+        }
+        housePatch = { supportedHouse: match };
+      }
+    }
+
     try {
       await ctx.db.patch(user._id, {
         teamName: trimmed,
@@ -197,6 +226,7 @@ export const updateProfile = mutation({
         ...(tiktokHandle !== undefined
           ? { tiktok: tiktokHandle ?? undefined }
           : {}),
+        ...(housePatch ?? {}),
       });
     } catch {
       throw new Error("Could not save your profile — please try again.");
@@ -268,6 +298,9 @@ export const getLeaderboard = query({
             : null,
         hasStoreBorder: borderOwners.has(String(row.userId)),
         role: user?.role ?? null,
+        // Manual house preference for the subtle row indicator. Normalised
+        // so a corrupt row can never render a bogus house name.
+        supportedHouse: normalizeHouse(user?.supportedHouse),
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,
       });
