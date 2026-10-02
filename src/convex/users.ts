@@ -190,3 +190,77 @@ export const getPublicProfile = query({
     }
   },
 });
+
+/**
+ * Set (or clear) the signed-in manager's manually-chosen supported house.
+ *
+ * This is the single-purpose counterpart to `managers.updateProfile`: the
+ * house dropdown can save on its own without dragging a team name, avatar or
+ * social handle along with it, so a rejected house can never clobber an
+ * unrelated field on the profile.
+ *
+ * Accepts EITHER form a client might send:
+ *   • `supportedHouse`   — the display name, e.g. "Fire" or "Fire House"
+ *   • `supportedHouseId` — the stable house key / id, e.g. "fire"
+ *
+ * Both are normalised through `normalizeHouse`, which is TOTAL and
+ * case/whitespace tolerant, so " fire ", "FIRE" and "Fire House" all resolve
+ * to the same stored value. A blank value CLEARS the preference (patching
+ * `undefined` removes the field) rather than writing a sentinel.
+ *
+ * Typed as plain optional strings rather than `houseValidator` so a stale or
+ * tampered client gets a readable message instead of an opaque
+ * `ArgumentValidationError`. Every failure path throws a friendly error; the
+ * client is expected to wrap the call in try/catch and toast it.
+ */
+export const updateSupportedHouse = mutation({
+  args: {
+    supportedHouse: v.optional(v.string()),
+    supportedHouseId: v.optional(v.string()),
+  },
+  handler: async (ctx, { supportedHouse, supportedHouseId }) => {
+    let user: Doc<"users">;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to choose a supported house.",
+      );
+    }
+
+    // `supportedHouseId` wins when both are sent: it is the more specific
+    // field. A missing/blank value on EITHER arg means "clear", but only if
+    // the caller actually asked for a house change.
+    const requested = supportedHouseId ?? supportedHouse;
+    if (requested === undefined) {
+      throw new Error("No house was provided.");
+    }
+
+    const raw = requested.trim();
+    // Tolerate the display form ("Fire House") as well as the key ("Fire").
+    const withoutSuffix = raw.replace(/\s*house$/i, "").trim();
+    const resolved: House | null = normalizeHouse(withoutSuffix);
+
+    if (raw !== "" && resolved === null) {
+      throw new Error(
+        `"${raw}" is not a house. Supported house must be one of: ${HOUSES.join(", ")}.`,
+      );
+    }
+
+    try {
+      // `undefined` REMOVES the optional field in Convex (`null` is not
+      // assignable), which is exactly how the preference is cleared.
+      await ctx.db.patch(user._id, { supportedHouse: resolved ?? undefined });
+      return { supportedHouse: resolved };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message.length > 0 &&
+        !err.message.startsWith("Uncaught")
+      ) {
+        throw err;
+      }
+      throw new Error("Could not update your supported house — please try again.");
+    }
+  },
+});

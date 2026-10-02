@@ -226,13 +226,12 @@ export default function Profile() {
             </div>
 
             {/* ── Manual house preference ──
-                Saves on change via its own mutation call, so it is NOT part of
-                the form's single "Save profile" submit — the team name it must
-                send along is the live local value. */}
+                Saves on change via its own mutation call
+                (`users.updateSupportedHouse`), so it is NOT part of the form's
+                single "Save profile" submit and never touches the team name. */}
             <HouseSelector
               id="supported-house"
               value={user?.supportedHouse ?? null}
-              teamName={teamName}
             />
 
             {/* ── Social links (optional, unlinked = field absent) ── */}

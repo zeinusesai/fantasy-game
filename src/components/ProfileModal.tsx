@@ -17,14 +17,16 @@ import { avatarPresetUrl } from "@/lib/fantasy";
 import { isPremiumPitch, normalizePitchTheme } from "@/lib/pitchTheme";
 import { UserBadges } from "@/components/UserBadge";
 import {
-  HouseSelector,
+  HouseBadgeGrid,
   HouseSupportDot,
   HouseSupportLabel,
+  defaultHouses,
+  useHouseOptions,
 } from "@/components/HouseSupport";
 import { DirectMessageDialog } from "@/components/DirectMessages";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { useAuth } from "@/hooks/use-auth";
-import { Crown, Eye, Flame, Instagram, Loader2, MessageSquare, Sparkles, Star } from "lucide-react";
+import { Crown, Eye, Flame, Instagram, Loader2, MessageSquare, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { useState } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 
@@ -136,6 +138,15 @@ export function ProfileModal({
   // that hasn't loaded yet still shows the value the caller already knows.
   const supportedHouse =
     profile?.supportedHouse ?? subject?.supportedHouse ?? null;
+
+  // ── Houses are fetched DYNAMICALLY, never hardcoded at the call site ──
+  // `useHouseOptions()` reads `api.houses.listHouses` and already layers the
+  // built-in fallback under an undefined (loading) or empty response, so the
+  // picker below can never render an empty, unselectable list. The explicit
+  // `houses && houses.length > 0` check is kept as a second line of defence
+  // for a caller that passes its own list.
+  const { houses, loading: housesLoading } = useHouseOptions();
+  const houseList = houses && houses.length > 0 ? houses : defaultHouses;
   const unlockedItems = cosmetics?.unlockedItems ?? [];
   const previewTitle = cosmetics?.customTitle ?? customTitle;
   const badgeMeta = profile?.badgeMeta ?? null;
@@ -227,15 +238,28 @@ export function ProfileModal({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Self-only: the manual house picker. Rivals get the indicator in
-            the header but never a control to change someone else's house. */}
+        {/* Self-only: the manual house picker, rendered as an interactive
+            badge grid so every registered house is visible at once. Rivals
+            get the indicator in the header but never a control to change
+            someone else's house. */}
         {isSelf && (
-          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
-            <HouseSelector
-              id="profile-modal-house"
+          <div className="grid gap-2 rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="size-3.5 text-muted-foreground" />
+              <span className="text-sm font-medium">Supported house</span>
+              {housesLoading ? (
+                <Loader2 className="size-3 animate-spin text-muted-foreground" />
+              ) : null}
+            </div>
+            <HouseBadgeGrid
+              houses={houseList}
               value={supportedHouse}
-              teamName={teamName}
             />
+            <p className="text-muted-foreground text-[11px]">
+              {housesLoading
+                ? "Loading houses…"
+                : "Purely cosmetic — your house is chosen by you and never changes when you edit your squad."}
+            </p>
           </div>
         )}
 
