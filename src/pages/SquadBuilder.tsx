@@ -44,8 +44,9 @@ import { toast } from "sonner";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { PickedByDialog } from "@/components/PickedByDialog";
+import { CaptainModal, MostCaptainedSummary } from "@/components/CaptainModal";
 import { downloadShareCard } from "@/lib/shareCard";
-import { Share2, Zap, Lock, LayoutGrid, ImageOff } from "lucide-react";
+import { Share2, Zap, Lock, LayoutGrid, ImageOff, Crown } from "lucide-react";
 import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
@@ -159,6 +160,9 @@ export default function SquadBuilder() {
     [myPhotoRequestsResult],
   );
   const [photoReportFor, setPhotoReportFor] = useState<PlayerRow | null>(null);
+
+  // ── Captain selection modal (with "Most Captained" analytics) ──
+  const [captainOpen, setCaptainOpen] = useState(false);
   const [photoReason, setPhotoReason] = useState("");
   const [photoBusy, setPhotoBusy] = useState(false);
   // Budget-reset state: sticky for the session so the guidance banner and the
@@ -775,27 +779,45 @@ export default function SquadBuilder() {
                   <CardTitle className="font-display text-sm font-bold uppercase tracking-wide">
                     Captain (2× points)
                   </CardTitle>
+                  {selectedPlayers.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-1.5"
+                      onClick={() => setCaptainOpen(true)}
+                    >
+                      <Crown className="mr-1.5 size-3.5" />
+                      {captainId ? "Change captain" : "Choose captain"}
+                    </Button>
+                  )}
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-2">
                   {selectedPlayers.length === 0 ? (
                     <p className="text-muted-foreground text-sm">Pick players first.</p>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedPlayers.map((p) => (
-                        <button
-                          key={p._id}
-                          onClick={() => setCaptainId(p._id)}
-                          className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold ring-1 transition-all ${
-                            captainId === p._id
-                              ? "bg-amber-400/20 text-amber-300 ring-amber-400/50"
-                              : "bg-secondary text-secondary-foreground ring-border hover:ring-primary/40"
-                          }`}
-                        >
-                          <PlayerAvatar player={p} size={22} className="ring-0" />
-                          {p.name}
-                        </button>
-                      ))}
-                    </div>
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedPlayers.map((p) => (
+                          <button
+                            key={p._id}
+                            onClick={() => setCaptainId(p._id)}
+                            className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold ring-1 transition-all ${
+                              captainId === p._id
+                                ? "bg-amber-400/20 text-amber-300 ring-amber-400/50"
+                                : "bg-secondary text-secondary-foreground ring-border hover:ring-primary/40"
+                            }`}
+                          >
+                            <PlayerAvatar player={p} size={22} className="ring-0" />
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Live "Most Captained" analytics for the chosen skipper. */}
+                      <MostCaptainedSummary
+                        playerId={captainId}
+                        isCaptain={captainId !== null}
+                      />
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -1043,6 +1065,15 @@ export default function SquadBuilder() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Captain selection with live "Most Captained" league analytics. */}
+      <CaptainModal
+        open={captainOpen}
+        onOpenChange={setCaptainOpen}
+        candidates={selectedPlayers}
+        captainId={captainId}
+        onConfirm={(id) => setCaptainId(id)}
+      />
 
       {/* Photo removal report modal */}
       <Dialog

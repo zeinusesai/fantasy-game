@@ -228,6 +228,122 @@ export const getPickCounts = query({
 });
 
 /**
+ * "Most Captained" league-wide analytics.
+ *
+ * Aggregates every saved squad to work out what share of managers have made
+ * each player their captain. Returned in two shapes at once so the UI never
+ * has to sort or compute anything:
+ *  - `percentages` / `counts`: lookup dictionaries keyed by playerId, for O(1)
+ *    badge rendering on a market card;
+ *  - `top`: the top 5, with resolved player names, for the "Top Captain
+ *    Choice" highlight.
+ *
+ * ZERO-ERROR CONTRACT:
+ *  - DIVISION BY ZERO — `totalCaptains` is 0 on a fresh database; every
+ *    percentage then resolves to 0 and `topCaptainId` stays null, so an empty
+ *    league renders clean 0% badges instead of NaN.
+ *  - NULL-SAFE — a squad with a missing / empty / malformed `captainId` is
+ *    skipped, not counted. A captain pointing at a deleted player still counts
+ *    in the dictionaries (they'd render on nobody's card) but is omitted from
+ *    `top` when the name can't be resolved.
+ *  - NEVER THROWS — any storage hiccup returns the same fully-formed zero
+ *    shape, so the captain modal can subscribe unconditionally.
+ */
+export const getMostCaptainedPlayers = query({
+  args: {},
+  handler: async (ctx) => {
+    const empty = {
+      totalSquads: 0,
+      totalCaptains: 0,
+      percentages: {} as Record<string, number>,
+      counts: {} as Record<string, number>,
+      topCaptainId: null as string | null,
+      topPercentage: 0,
+      top: [] as Array<{
+        playerId: string;
+        count: number;
+        percentage: number;
+        name: string | null;
+        house: string | null;
+        position: string | null;
+      }>,
+    };
+    try {
+      const squads = await ctx.db.query("squads").collect();
+
+      // Tally the raw captain choices first.
+      const counts: Record<string, number> = {};
+      let totalCaptains = 0;
+      for (const squad of squads) {
+        const captainId = squad?.captainId;
+        // Skip squads with no usable captain (fresh squad, legacy row, junk id).
+        if (typeof captainId !== "string" || captainId.trim().length === 0) continue;
+        counts[captainId] = (counts[captainId] ?? 0) + 1;
+        totalCaptains += 1;
+      }
+
+      // Guard: an empty league means every percentage is exactly 0.
+      const percentages: Record<string, number> = {};
+      for (const [id, n] of Object.entries(counts)) {
+        percentages[id] =
+          totalCaptains > 0
+            ? Math.round((n / totalCaptains) * 1000) / 10 // 1 decimal place
+            : 0;
+      }
+
+      // Ranked list. Ties break on playerId so the order is STABLE across
+      // renders — a jittering "Top Captain" badge would look broken.
+      const ranked = Object.entries(counts).sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      });
+
+      const topCaptainId = ranked.length > 0 ? ranked[0][0] : null;
+      const topPercentage = topCaptainId ? percentages[topCaptainId] ?? 0 : 0;
+
+      // Resolve names for the top 5 only (keeps the query cheap).
+      const top = [];
+      for (const [playerId, n] of ranked.slice(0, 5)) {
+        let name: string | null = null;
+        let house: string | null = null;
+        let position: string | null = null;
+        try {
+          const p = await ctx.db.get(playerId as Id<"players">).catch(() => null);
+          if (p) {
+            name = typeof p.name === "string" ? p.name : null;
+            house = typeof p.house === "string" ? p.house : null;
+            position = typeof p.position === "string" ? p.position : null;
+          }
+        } catch {
+          // Deleted player — keep the row, just without a name.
+        }
+        top.push({
+          playerId,
+          count: n,
+          percentage: percentages[playerId] ?? 0,
+          name,
+          house,
+          position,
+        });
+      }
+
+      return {
+        totalSquads: squads.length,
+        totalCaptains,
+        percentages,
+        counts,
+        topCaptainId,
+        topPercentage,
+        top,
+      };
+    } catch {
+      // Never bubble a storage hiccup into a rejected query.
+      return empty;
+    }
+  },
+});
+
+/**
  * Public rival-squad view for the Leaderboard inspector: the manager's
  * 7-a-side lineup, captain, points breakdown and remaining budget.
  * Null-safe: unknown/deleted user or missing squad returns null so the
