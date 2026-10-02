@@ -1,1 +1,0 @@
-import{j as e}from"./framer-motion-DPfFMxeW.js";import{L as t}from"./index-CE5xKfAT.js";function i({label:s="Loading…"}){return e.jsxs("div",{className:"flex min-h-[50vh] flex-col items-center justify-center gap-3",children:[e.jsx(t,{className:"text-muted-foreground size-8 animate-spin"}),e.jsx("p",{className:"text-muted-foreground text-sm",children:s})]})}export{i as P};
