@@ -49,6 +49,7 @@ export default function Dashboard() {
   const mySquad = useQuery(api.squads.getMySquad);
   const myStats = useQuery(api.managers.getMyStats);
   // Store cosmetic: "Golden Jersey / Premium Pitch" unlocks a gold pitch.
+  // Falls back to the store query, then to the plain green default.
   const store = useQuery(api.transactions.getStore);
   const goldTheme =
     (store?.items ?? []).some(
@@ -228,11 +229,10 @@ export default function Dashboard() {
                   formation={mySquad?.formation ?? "2-3-1"}
                   showStatus
                   showFormationLabel
-                  className={
-                    goldTheme
-                      ? "from-amber-500/25 via-yellow-500/15 to-amber-600/20 border-amber-300/40"
-                      : undefined
-                  }
+                  // Store cosmetics — `?? "default"` keeps the green pitch for
+                  // a manager who hasn't unlocked (or has toggled off) them.
+                  theme={user?.activePitchTheme ?? (goldTheme ? "premium" : "default")}
+                  goldenJersey={user?.hasGoldenJersey === true || goldTheme}
                 />
                 {goldTheme && (
                   <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-widest text-amber-300">

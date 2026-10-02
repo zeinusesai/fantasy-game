@@ -3,6 +3,11 @@ import { internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { DEFAULT_CONFIG, CONFIG_KEYS, FIXED_MANAGER_BUDGET } from "./configDefaults";
+import {
+  DEFAULT_PITCH_THEME,
+  PREMIUM_PITCH_THEME,
+  THEME_ITEM_ID,
+} from "./pitchThemes";
 import type { Doc, Id } from "./_generated/dataModel";
 
 export const getUserIdByUsername = internalQuery({
@@ -17,6 +22,53 @@ export const getUserIdByUsername = internalQuery({
 });
 
 export type PlatformUser = Doc<"users">;
+
+/**
+ * Store cosmetics a manager currently has switched ON, for rendering their
+ * pitch / jersey anywhere it is inspected (own profile, Dashboard, Leaderboard
+ * rival inspector, ProfileModal).
+ *
+ * Derived from `storeEntitlements`, which is the single source of truth for
+ * store perks, so a grant or a toggle updates every client reactively. The
+ * Super Admin auto-owns every cosmetic.
+ *
+ * TOTAL: any failure — missing table, corrupt row, db hiccup — degrades to
+ * "no cosmetics" instead of throwing, so a cosmetic lookup can never crash a
+ * page or a query subscription.
+ */
+export async function readUserCosmetics(ctx: QueryCtx, user: Doc<"users">) {
+  const none = {
+    activePitchTheme: DEFAULT_PITCH_THEME,
+    hasGoldenJersey: false,
+    hasProfileBorder: false,
+    hasCustomTitle: false,
+  } as const;
+  if (user.role === "super_admin") {
+    return {
+      activePitchTheme: PREMIUM_PITCH_THEME,
+      hasGoldenJersey: true,
+      hasProfileBorder: true,
+      hasCustomTitle: true,
+    } as const;
+  }
+  try {
+    const rows = await ctx.db
+      .query("storeEntitlements")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+    const enabled = (itemId: string) =>
+      rows.some((r) => r.itemId === itemId && r.enabled === true);
+    const premium = enabled(THEME_ITEM_ID);
+    return {
+      activePitchTheme: premium ? PREMIUM_PITCH_THEME : DEFAULT_PITCH_THEME,
+      hasGoldenJersey: premium,
+      hasProfileBorder: enabled("profile_border"),
+      hasCustomTitle: enabled("custom_title"),
+    };
+  } catch {
+    return none;
+  }
+}
 
 /**
  * Platform-wide settings. The budget is FIXED at $70m for every manager, so

@@ -27,6 +27,7 @@ import { formatMoney } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
 import { WagerDialog } from "@/components/WagerDialog";
+import { ProfileModal } from "@/components/ProfileModal";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -398,6 +399,8 @@ function RivalInspector({
   const loading = result === undefined;
 
   const squadPlayers = rival?.players ?? [];
+  // The full themed profile modal is a separate, on-demand surface.
+  const [profileOpen, setProfileOpen] = useState(false);
   const byPosition = squadPlayers.reduce(
     (acc, p) => {
       (acc[p.position] ??= []).push({
@@ -527,16 +530,56 @@ function RivalInspector({
                   formation={rival?.formation ?? "2-3-1"}
                   showStatus
                   showFormationLabel
+                  // Store cosmetics of the inspected manager — defensive
+                  // fallbacks keep the plain green pitch for everyone else.
+                  theme={rival?.activePitchTheme ?? "default"}
+                  goldenJersey={rival?.hasGoldenJersey === true}
                 />
               </div>
             </>
           )}
+
+          {/* Full themed profile card — premium pitch + golden jerseys. */}
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => setProfileOpen(true)}
+            disabled={loading || rival === null}
+          >
+            <Crown className="mr-1.5 size-4" /> View full profile
+          </Button>
 
           <Button variant="outline" className="w-full" onClick={onClose}>
             Close inspector
           </Button>
         </div>
       </SheetContent>
+
+      {/* Themed profile card. Guarded by `rival !== null` so a deleted/unfinished
+          manager never opens an empty modal. */}
+      {rival !== null && (
+        <ProfileModal
+          open={profileOpen}
+          onOpenChange={setProfileOpen}
+          subject={{
+            userId,
+            username: rival.username,
+            teamName: rival.teamName,
+            avatar: rival.avatar,
+            role: rival.role,
+            customBadge: rival.customBadge,
+            formation: rival.formation,
+            totalSpent: rival.totalSpent,
+            totalPoints: rival.totalPoints,
+            rank: rival.rank,
+            managerCount: rival.managerCount,
+            // Cosmetic settings — `?? "default"` keeps the plain pitch for a
+            // manager who has never unlocked or toggled anything.
+            activePitchTheme: rival.activePitchTheme ?? "default",
+            hasGoldenJersey: rival.hasGoldenJersey === true,
+          }}
+        />
+      )}
     </Sheet>
   );
 }

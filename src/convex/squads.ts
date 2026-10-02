@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireUser, requireSuperAdmin, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
+import { requireUser, requireSuperAdmin, getPlatformConfig, getSquadForUser, getLeaderboardRows, readUserCosmetics } from "./lib";
 import { formatMoney, safeBudget, toSafeAmount, FIXED_MANAGER_BUDGET, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
 import { transferLockReason } from "./gameweekStructure";
 import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
@@ -258,6 +258,12 @@ export const getSquadByUserId = query({
       const settings = normalizeSettings(await getSettingsRow(ctx));
       const effectiveBudget = resolveManagerBudget(settings, String(userId));
 
+      // Store cosmetics for the inspected manager, so a rival's premium pitch
+      // / golden jerseys render in the inspector and the ProfileModal. Derived
+      // from entitlements (switched-off perks don't apply) with the Super Admin
+      // auto-owning everything. TOTAL — a failed lookup means "no cosmetics".
+      const cosmetics = await readUserCosmetics(ctx, user);
+
       // On-load sanitization: an over-budget stored squad is illegal — serve
       // it empty + flagged so the rival inspector renders a clean builder and
       // the owner is pushed to re-draft within budget.
@@ -281,6 +287,8 @@ export const getSquadByUserId = query({
           managerCount: rows.length,
           customBadge: user.customBadge ?? null,
           role: user.role ?? null,
+          activePitchTheme: cosmetics.activePitchTheme,
+          hasGoldenJersey: cosmetics.hasGoldenJersey,
           overBudgetReset: true,
         };
       }
@@ -304,6 +312,8 @@ export const getSquadByUserId = query({
         managerCount: rows.length,
         customBadge: user.customBadge ?? null,
         role: user.role ?? null,
+        activePitchTheme: cosmetics.activePitchTheme,
+        hasGoldenJersey: cosmetics.hasGoldenJersey,
         overBudgetReset: false,
       };
     } catch {

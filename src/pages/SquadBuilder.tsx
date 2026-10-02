@@ -722,6 +722,10 @@ export default function SquadBuilder() {
                     formation={formation}
                     showStatus
                     showFormationLabel
+                    // Store cosmetics — `?? "default"` so a manager who never
+                    // unlocked anything gets the standard green pitch.
+                    theme={user?.activePitchTheme ?? "default"}
+                    goldenJersey={user?.hasGoldenJersey === true}
                   />
                 </CardContent>
               </Card>

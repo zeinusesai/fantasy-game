@@ -10,6 +10,12 @@ import {
 } from "@/convex/formations";
 import type { FormationSlot } from "@/convex/formations";
 import type { House, Position } from "@/convex/schema";
+import {
+  normalizePitchTheme,
+  pitchMarkingsClass,
+  pitchThemeClass,
+  type PitchTheme,
+} from "@/lib/pitchTheme";
 
 export type PitchPlayer = {
   playerId: string;
@@ -105,10 +111,20 @@ function assignToSlots(
  * Circular player badge with optional custom photo. If the photo URL is
  * missing or fails to load, we fall back to the initials/kit-letter disc —
  * the component never renders a broken image.
+ *
+ * CIRCLE-CLIPPING FIX: this container is deliberately `overflow-visible`, NOT
+ * `overflow-hidden`. The captain badge is anchored half outside the disc
+ * (top-right corner), so an `overflow-hidden` circle cropped it in half. Only
+ * the inner avatar keeps `overflow-hidden`, which is what actually needs to be
+ * round. An extra padding wrapper guarantees the glow/shadow is never cut off
+ * by a tight parent box either.
+ *
+ * `golden` swaps the disc for the metallic store jersey.
  */
 export function PlayerBadge({
   player,
   size = 64,
+  golden = false,
 }: {
   player: PhotoSource & {
     name: string;
@@ -116,38 +132,61 @@ export function PlayerBadge({
     isCaptain?: boolean;
   };
   size?: number;
+  /** Store cosmetic: render the golden jersey disc. */
+  golden?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "relative flex flex-col items-center justify-center overflow-hidden rounded-full ring-2 shadow-lg",
-        player.isCaptain
-          ? "bg-slate-900/90 ring-2 ring-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.65)]"
-          : "bg-slate-900/85 ring-white/40",
-      )}
-      style={{ width: size, height: size }}
-    >
-      {/* Shared avatar: custom photo (`image` → `photoUrl`) with an initials +
-          position placeholder on error, so a broken URL never shows up. */}
-      <PlayerAvatar
-        player={player}
-        size={size}
-        showPosition
-        className="absolute inset-0 size-full ring-0 ring-offset-0"
-      />
-      {/* Golden captain armband frame */}
+    // Padding layer: gives the captain badge + glow room to render outside the
+    // circle without being clipped by this box.
+    <span className="relative inline-flex shrink-0 overflow-visible p-1.5">
+      <span
+        className={cn(
+          "relative flex shrink-0 items-center justify-center overflow-visible rounded-full",
+          golden
+            ? cn("jersey-gold", "ring-2 ring-amber-200/90 shadow-[0_0_20px_rgba(251,191,36,0.55)]")
+            : "bg-slate-900/85 ring-2 ring-white/40 shadow-lg",
+          player.isCaptain &&
+            "ring-2 ring-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.65)]",
+        )}
+        style={{ width: size, height: size }}
+      >
+        {/* Shared avatar: custom photo (`image` → `photoUrl`) with an initials +
+            position placeholder on error, so a broken URL never shows up. The
+            clip lives HERE (the avatar is a circle) rather than on the outer
+            container, which must stay `overflow-visible` for the captain badge. */}
+        <PlayerAvatar
+          player={player}
+          size={size}
+          showPosition
+          className="absolute inset-0 size-full overflow-hidden rounded-full ring-0 ring-offset-0"
+        />
+        {/* Golden captain armband frame — INSIDE the circle (inset-0) so it is
+            never clipped, and at z-10 so it sits above the photo. */}
+        {player.isCaptain && (
+          <span
+            aria-label="Captain"
+            title="Captain"
+            className="pointer-events-none absolute inset-0 z-10 rounded-full border-2 border-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.7)]"
+          />
+        )}
+      </span>
+
+      {/* GOLDEN CAPTAIN BADGE — a sibling of the circle, NOT a child, so no
+          ancestor's `overflow: hidden` can crop it. Anchored to the top-right
+          corner at a fixed 20px (size-5), pulled half-outwards so it reads as
+          an overlay rather than an inset dot, and layered with z-20 so it sits
+          above both the disc and the player name below. Scales cleanly because
+          every offset is a percentage/rem rather than a hard pixel value. */}
       {player.isCaptain && (
         <span
           aria-label="Captain"
-          title="Captain"
-          className="pointer-events-none absolute inset-0 rounded-full border-2 border-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.7)]"
+          title="Captain — 2× points"
+          className="pointer-events-none absolute right-0 top-0 z-20 flex size-5 -translate-y-1/4 translate-x-1/4 items-center justify-center rounded-full bg-gradient-to-br from-amber-200 via-yellow-400 to-amber-600 font-black leading-none text-amber-950 shadow-[0_0_10px_rgba(251,191,36,0.85)] ring-1 ring-amber-200/90 [font-size:10px] sm:size-[22px] sm:[font-size:11px]"
         >
-          <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500 px-1.5 text-[8px] font-black tracking-wide text-amber-950 shadow">
-            (C)
-          </span>
+          C
         </span>
       )}
-    </div>
+    </span>
   );
 }
 
@@ -179,6 +218,8 @@ export function PitchView({
   showStatus = false,
   showFormationLabel = false,
   className,
+  theme,
+  goldenJersey = false,
 }: {
   byPosition: Partial<Record<Position, PitchPlayer[]>>;
   emptyLabel?: string;
@@ -190,22 +231,48 @@ export function PitchView({
   /** Show a "2-3-1 · Balanced" pill in the corner. */
   showFormationLabel?: boolean;
   className?: string;
+  /**
+   * Store cosmetic: pitch aesthetic. Any value is safe — null/undefined/junk
+   * all resolve to the standard green pitch via `normalizePitchTheme`.
+   */
+  theme?: PitchTheme | string | null;
+  /** Store cosmetic: render the starters' golden jerseys. */
+  goldenJersey?: boolean;
 }) {
-  // Single safe resolution point — everything downstream uses this string.
+  // Single safe resolution point — everything downstream uses these values.
   const currentFormation = resolveFormation(formation ?? DEFAULT_FORMATION);
+  const currentTheme = normalizePitchTheme(theme);
+  const premium = currentTheme === "premium";
+  const gold = goldenJersey === true;
   const cells = assignToSlots(byPosition, currentFormation);
 
   return (
     <div
       className={cn(
-        "pitch-bg relative overflow-hidden rounded-2xl border border-emerald-900/50 p-4 shadow-inner",
+        "relative overflow-hidden rounded-2xl border p-4 shadow-inner",
+        pitchThemeClass(currentTheme),
         className,
       )}
     >
       {/* markings */}
-      <div className="pointer-events-none absolute inset-3 rounded-xl border border-white/25" />
-      <div className="pointer-events-none absolute inset-x-3 top-1/2 h-px bg-white/25" />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 size-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/25" />
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-3 rounded-xl border border-white/25",
+          pitchMarkingsClass(currentTheme),
+        )}
+      />
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-x-3 top-1/2 h-px bg-white/25",
+          pitchMarkingsClass(currentTheme),
+        )}
+      />
+      <div
+        className={cn(
+          "pointer-events-none absolute left-1/2 top-1/2 size-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/25",
+          pitchMarkingsClass(currentTheme),
+        )}
+      />
 
       {showFormationLabel && (
         <span className="absolute right-4 top-4 z-10 rounded-full border border-white/20 bg-slate-900/70 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-100 backdrop-blur">
@@ -213,7 +280,17 @@ export function PitchView({
         </span>
       )}
 
-      <div className="relative h-[440px] w-full sm:h-[500px]">
+      {/* Premium-pitch watermark — purely decorative, pointer-events-none. */}
+      {premium && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-3 left-1/2 z-0 -translate-x-1/2 text-[10px] font-black uppercase tracking-[0.25em] text-amber-200/40"
+        >
+          Premium Pitch
+        </span>
+      )}
+
+      <div className="relative z-[1] h-[440px] w-full sm:h-[500px]">
         {cells.map((cell, i) => {
           const { slot, player } = cell;
           const p = player;
@@ -237,18 +314,25 @@ export function PitchView({
                 </button>
               ) : (
                 <>
-                  <div className="relative">
-                    <PlayerBadge player={p} size={60} />
+                  <div className="relative flex justify-center">
+                    <PlayerBadge player={p} size={60} golden={gold} />
                     {p.isPotm && (
+                      // Top-LEFT: the top-right corner belongs to the captain
+                      // badge, so the two never overlap.
                       <span
-                        className="absolute -right-1 -top-1 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"
+                        className="absolute -left-1 -top-1 z-20 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"
                         title="Player of the Match"
                       >
                         ★
                       </span>
                     )}
                   </div>
-                  <span className="max-w-20 truncate text-xs font-semibold text-white drop-shadow sm:max-w-24">
+                  <span
+                    className={cn(
+                      "max-w-20 truncate text-xs font-semibold text-white drop-shadow sm:max-w-24",
+                      gold && "text-amber-100",
+                    )}
+                  >
                     {p.name}
                   </span>
                   <div className="flex items-center gap-1">

@@ -383,6 +383,10 @@ export default function Profile() {
                   formation={mySquad?.formation ?? "2-3-1"}
                   showStatus
                   showFormationLabel
+                  // Store cosmetics — safe fallbacks for a user row that has
+                  // never unlocked (or has switched off) these perks.
+                  theme={user?.activePitchTheme ?? "default"}
+                  goldenJersey={user?.hasGoldenJersey === true}
                 />
               </div>
             </CardContent>
