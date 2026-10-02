@@ -41,6 +41,13 @@ const ROW_ORDER: Position[] = ["GK", "DEF", "MID", "FWD"];
 const OVERFLOW_Y = 97;
 
 /**
+ * Minimum tap target per Apple HIG / Material accessibility (44 × 44 px).
+ * The visual disc stays at `NODE_SIZE`; the hit area is expanded by the
+ * PlayerBadge padding layer so nothing grows or overlaps on the pitch.
+ */
+const NODE_SIZE = 52;
+
+/**
  * Map the selected players onto the formation's 7 pitch slots.
  *
  * Two passes so nothing is ever dropped: players are first placed in a slot
@@ -194,10 +201,13 @@ export function PlayerBadge({
 export function EmptySlot({ label }: { label?: string }) {
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="flex size-16 items-center justify-center rounded-full border-2 border-dashed border-white/40 bg-white/5 text-white/60">
-        <span className="text-xl font-bold">+</span>
+      {/* Shrinks on mobile so an empty slot never crowds its neighbours. */}
+      <div className="flex size-12 items-center justify-center rounded-full border-2 border-dashed border-white/40 bg-white/5 text-white/60 sm:size-16">
+        <span className="text-lg font-bold sm:text-xl">+</span>
       </div>
-      <span className="text-[10px] font-medium text-white/60">{label ?? "Empty"}</span>
+      <span className="max-w-[70px] truncate text-[10px] font-medium text-white/60 sm:max-w-24">
+        {label ?? "Empty"}
+      </span>
     </div>
   );
 }
@@ -249,7 +259,7 @@ export function PitchView({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-2xl border p-4 shadow-inner",
+        "relative overflow-hidden rounded-2xl border p-3 shadow-inner sm:p-4",
         pitchThemeClass(currentTheme),
         className,
       )}
@@ -290,7 +300,12 @@ export function PitchView({
         </span>
       )}
 
-      <div className="relative z-[1] h-[440px] w-full sm:h-[500px]">
+      // Aspect-locked pitch: it scales with the VIEWPORT WIDTH instead of a fixed
+        // pixel height, so all seven slots (plus the bench strip callers render
+        // below it) fit on an iPhone SE through Pro Max with no horizontal
+        // cut-off. `max-h-[62dvh]` keeps a very tall screen from pushing the
+        // fold too far down.
+        <div className="relative z-[1] mx-auto aspect-[3/4] max-h-[62dvh] w-full max-w-[360px] sm:max-w-none">
         {cells.map((cell, i) => {
           const { slot, player } = cell;
           const p = player;
@@ -315,7 +330,10 @@ export function PitchView({
               ) : (
                 <>
                   <div className="relative flex justify-center">
-                    <PlayerBadge player={p} size={60} golden={gold} />
+                    {/* `NODE_SIZE` (52px) is the visual disc; the PlayerBadge
+                        padding layer expands the HIT area to 44px+ without
+                        growing the node, so adjacent slots never collide. */}
+                    <PlayerBadge player={p} size={NODE_SIZE} golden={gold} />
                     {p.isPotm && (
                       // Top-LEFT: the top-right corner belongs to the captain
                       // badge, so the two never overlap.
@@ -327,9 +345,12 @@ export function PitchView({
                       </span>
                     )}
                   </div>
+                  {/* Compact label: truncates on one line and is capped so a
+                      long name can never widen the card or hide the captain
+                      badge. `text-fit` also breaks very long unbroken words. */}
                   <span
                     className={cn(
-                      "max-w-20 truncate text-xs font-semibold text-white drop-shadow sm:max-w-24",
+                      "block max-w-[70px] truncate text-[10px] font-semibold text-white drop-shadow sm:max-w-24 sm:text-xs",
                       gold && "text-amber-100",
                     )}
                   >

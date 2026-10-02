@@ -28,6 +28,7 @@ import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
 import { WagerDialog } from "@/components/WagerDialog";
 import { ProfileModal } from "@/components/ProfileModal";
+import { SkeletonList } from "@/components/Skeletons";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -60,6 +61,38 @@ export default function Leaderboard() {
   const rows = leaderboardResult ?? [];
   const loading = leaderboardResult === undefined;
   const medalStyles = ["text-amber-300", "text-slate-300", "text-orange-300"];
+
+  /**
+   * Compact manager avatar for the mobile card list. Layers the same
+   * fallbacks as the desktop table (upload → preset → initials) and hides a
+   * broken image via onError so a dead URL can never show a glyph.
+   */
+  const ManagerAvatar = ({
+    username,
+    avatar,
+    fallback,
+  }: {
+    username: string | null;
+    avatar: string | null | undefined;
+    fallback?: string | null;
+  }) => (
+    <Avatar className="size-9 shrink-0">
+      <AvatarImage
+        src={
+          avatar && (avatar.startsWith("http") || avatar.startsWith("data:"))
+            ? avatar
+            : (avatarPresetUrl(avatar ?? null) ?? undefined)
+        }
+        alt={username ?? "manager"}
+        onError={(e) => {
+          (e.target as HTMLImageElement).style.visibility = "hidden";
+        }}
+      />
+      <AvatarFallback className="bg-primary/20 text-primary text-[10px] font-bold">
+        {(username ?? fallback ?? "?").slice(0, 2).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  );
 
   // Safe fallbacks: `?? []` / `?? null` everywhere, so an empty or failed
   // query simply omits the badges rather than crashing the table.
@@ -112,14 +145,101 @@ export default function Leaderboard() {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
-                <Loader2 className="size-4 animate-spin" /> Loading rankings…
-              </p>
+              // Skeletons rather than a spinner: the list arrives at a stable
+              // height, so nothing reflows once the rows land.
+              <>
+                <SkeletonList className="hidden sm:block" count={6} />
+                <SkeletonList className="sm:hidden" count={6} />
+              </>
             ) : rows.length === 0 ? (
               <p className="text-muted-foreground py-8 text-center text-sm">
                 No managers have picked a squad yet. Be the first!
               </p>
             ) : (
+              <>
+              {/* ── MOBILE: stacked cards ──
+                  A 7-column table cannot fit an iPhone without side-scrolling
+                  and cutting text off. Below `sm:` each manager is a touch-
+                  friendly card instead: rank, avatar, team, handle, points.
+                  The full table returns from `sm:` up. */}
+              <ul className="space-y-2 sm:hidden">
+                {rows.map((row) => {
+                  const rowIsMe = row.userId === user?._id;
+                  const rowIsFirst =
+                    tournamentEnded && rows.length > 0 && row.rank === 1;
+                  return (
+                  <li key={row.userId}>
+                    <button
+                      type="button"
+                      onClick={() => setInspectUserId(row.userId)}
+                      className={cn(
+                        "flex w-full min-h-[56px] items-center gap-2.5 rounded-xl border border-border/70 bg-secondary/30 p-2.5 text-left transition-colors active:bg-secondary/60",
+                        rowIsFirst &&
+                          "border-amber-400/40 bg-amber-400/10",
+                        rowIsMe && "border-primary/40",
+                      )}
+                    >
+                      {/* Rank */}
+                      <span className="font-score w-8 shrink-0 text-center text-sm font-bold">
+                        {row.rank <= 3 ? (
+                          row.rank === 1 ? (
+                            <Crown className={cn("mx-auto size-4", medalStyles[0])} />
+                          ) : (
+                            <Medal className={cn("mx-auto size-4", medalStyles[row.rank - 1])} />
+                          )
+                        ) : (
+                          <span className={cn(row.rank <= 3 && medalStyles[row.rank - 1])}>
+                            #{row.rank}
+                          </span>
+                        )}
+                      </span>
+                      {/* Avatar — store border when the manager has it on. */}
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 rounded-full",
+                          row.hasStoreBorder &&
+                            "ring-2 ring-orange-400/70",
+                        )}
+                      >
+                        <ManagerAvatar
+                          username={row.username}
+                          avatar={row.avatar}
+                          fallback={row.teamName}
+                        />
+                      </span>
+                      {/* Identity — every dynamic string truncates. */}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1">
+                          <span className="truncate text-sm font-semibold">
+                            {row.teamName}
+                          </span>
+                          <UserBadges
+                            sizeClass="size-3.5"
+                            role={row.role}
+                            customBadge={row.customBadge}
+                          />
+                        </span>
+                        <span className="text-muted-foreground block truncate text-xs">
+                          @{row.username}
+                        </span>
+                      </span>
+                      {/* Points */}
+                      <span className="shrink-0 text-right">
+                        <span className="font-score block text-base font-bold">
+                          {row.totalPoints}
+                        </span>
+                        <span className="text-muted-foreground block text-[10px] uppercase">
+                          pts
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                  );
+                })}
+              </ul>
+
+              {/* ── DESKTOP: the full table ── */}
+              <div className="hidden sm:block">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -349,6 +469,8 @@ export default function Leaderboard() {
                   })}
                 </TableBody>
               </Table>
+              </div>
+              </>
             )}
           </CardContent>
         </Card>

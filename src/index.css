@@ -265,4 +265,86 @@
     overflow-x: hidden;
     -webkit-tap-highlight-color: transparent;
   }
+
+  /* ── Safe-area insets ──
+     iOS home-indicator swipe bar. `env()` resolves to 0px on browsers without
+     a notch, so these are safe to apply unconditionally. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* Room for the fixed bottom tab bar + the home indicator. */
+  .pb-nav-safe {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .h-nav-safe {
+    height: calc(4rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ── Bottom-sheet animation ──
+     Drives the mobile Dialog/Sheet conversion in ui/dialog.tsx. */
+  @keyframes sheet-slide-up {
+    from {
+      transform: translate3d(0, 100%, 0);
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+    }
+  }
+  .animate-sheet-up {
+    animation: sheet-slide-up 0.28s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+
+  /* ── Loading skeletons ──
+     Rendered instead of a blank white screen while a list query resolves. */
+  @keyframes skeleton-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 0.85;
+    }
+  }
+  .skeleton {
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+    background: hsl(var(--muted) / 0.7);
+    border-radius: calc(var(--radius) - 2px);
+  }
+  .skeleton-text {
+    height: 0.75rem;
+    width: 100%;
+  }
+  .skeleton-line {
+    display: block;
+    height: 0.75rem;
+    border-radius: 9999px;
+  }
+}
+
+@layer utilities {
+  /* Long dynamic strings (team names, handles, house names) can never widen a
+     card: they truncate on one line, or wrap on a word boundary when a card is
+     stacked. Used across the leaderboard, profile and store surfaces. */
+  .text-fit {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  /* Minimum 44px touch target without changing the visual box. */
+  .touch-target {
+    position: relative;
+  }
+  .touch-target::after {
+    content: "";
+    position: absolute;
+    inset: 50% 50% 50% 50%;
+    min-width: 44px;
+    min-height: 44px;
+    transform: translate3d(-50%, -50%, 0);
+  }
 }

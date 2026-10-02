@@ -326,7 +326,7 @@ function OverviewTab({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-md space-y-6 sm:max-w-7xl">
       {/* Head-to-head */}
       <Card className="border-border/80">
         <CardHeader className="pb-2">

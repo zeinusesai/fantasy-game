@@ -66,7 +66,11 @@ export function AppNav({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="stadium-bg min-h-screen">
+    // `min-h-[100dvh]` — the DYNAMIC viewport height. Unlike `h-screen` /
+    // `100vh`, this shrinks and grows with the mobile URL bar as it collapses
+    // on scroll, so the page never renders taller than the visible viewport
+    // (which was the classic "extra scroll + cut-off footer" iOS bug).
+    <div className="stadium-bg min-h-[100dvh] overflow-x-hidden">
       <header className="sticky top-0 z-40 border-b border-border/80 bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-4">
           <button
@@ -247,7 +251,65 @@ export function AppNav({ children }: { children: ReactNode }) {
         )}
       </header>
 
-      <main className="mx-auto w-full max-w-7xl px-4 py-6">{children}</main>
+      // `pb-nav-safe` clears the fixed bottom tab bar + the iOS home indicator so
+        // the last card is never trapped underneath them.
+      <main className="mx-auto w-full max-w-7xl px-4 pt-4 pb-4 sm:py-6 pb-nav-safe sm:pb-6">
+        {children}
+      </main>
+
+      {/* ── Sticky bottom tab bar (mobile) ──
+          Hidden from `sm:` up, where the top nav takes over. `env(safe-area-
+          inset-bottom)` keeps the tap targets clear of the iOS home swipe bar. */}
+      <nav
+        aria-label="Primary"
+        className="bg-slate-900/95 border-slate-800 backdrop-blur-md border-t fixed inset-x-0 bottom-0 z-50 flex h-16 items-center justify-around pb-safe sm:hidden"
+      >
+        {LINKS.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              cn(
+                // 44px+ tap target, column layout, label always visible on
+                // mobile (the header nav hides it to save space).
+                "flex min-h-[44px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors",
+                isActive ? "text-primary" : "text-slate-400 active:text-slate-200",
+              )
+            }
+          >
+            <Icon className="size-5 shrink-0" />
+            <span className="max-w-full truncate">{label}</span>
+          </NavLink>
+        ))}
+        {isAdmin && (
+          <NavLink
+            to="/admin"
+            className={({ isActive }) =>
+              cn(
+                "flex min-h-[44px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors",
+                isActive ? "text-primary" : "text-slate-400 active:text-slate-200",
+              )
+            }
+          >
+            <Settings2 className="size-5 shrink-0" />
+            <span className="max-w-full truncate">Admin</span>
+          </NavLink>
+        )}
+        {/* Messages live in the bar so DMs stay reachable from every page. */}
+        <button
+          type="button"
+          onClick={() => setMessagesOpen(true)}
+          className="text-slate-400 active:text-slate-200 relative flex min-h-[44px] min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[10px] font-medium transition-colors"
+        >
+          <span className="relative inline-flex">
+            <MessageSquare className="size-5 shrink-0" />
+            <span className="absolute -right-2 -top-1.5">
+              <UnreadBadge />
+            </span>
+          </span>
+          <span className="max-w-full truncate">Messages</span>
+        </button>
+      </nav>
 
       {/* In-app direct messages. Rendered at the shell level so the thread
           list and the unread badge stay live on every page. */}

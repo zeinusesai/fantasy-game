@@ -320,10 +320,10 @@ export default function Admin() {
 
   return (
     <AppNav>
-      <div className="space-y-6">
+      <div className="mx-auto w-full max-w-md space-y-6 sm:max-w-7xl">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="font-display text-3xl font-bold tracking-tight">Admin panel</h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Admin panel</h1>
             <p className="text-muted-foreground text-sm">
               {isSuper
                 ? "Full system control — users, budget, players, matches and logos."
@@ -801,7 +801,7 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
                   </p>
                 </div>
               )}
-              <div className="max-h-[520px] overflow-y-auto">
+              <div className="max-h-[520px] overflow-y-auto overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1599,6 +1599,10 @@ function UsersTab() {
             No users found — or your account doesn't have access to this list.
           </p>
         ) : (
+          // Dense admin table: scrolls INSIDE its own box on narrow screens
+          // (`overflow-x-auto`) so the page itself never scrolls sideways and
+          // no cell is clipped by the viewport edge.
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -1693,6 +1697,7 @@ function UsersTab() {
               )}
             </TableBody>
           </Table>
+          </div>
         )}
 
         {/* Password reset inline panel */}
@@ -2689,6 +2694,10 @@ function RolesTab() {
             No registered users found.
           </p>
         ) : (
+          // Dense admin table: scrolls INSIDE its own box on narrow screens
+          // (`overflow-x-auto`) so the page itself never scrolls sideways and
+          // no cell is clipped by the viewport edge.
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -2782,6 +2791,7 @@ function RolesTab() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
     </Card>

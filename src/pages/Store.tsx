@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/use-auth";
+import { SkeletonList } from "@/components/Skeletons";
 import {
   MAX_PRICE_AED,
   STORE_ITEMS,
@@ -176,13 +177,13 @@ export default function Store() {
 
   return (
     <AppNav>
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto w-full max-w-5xl space-y-6 px-1">
         {/* Header */}
         <div>
           <p className="text-muted-foreground flex items-center gap-1.5 text-sm font-medium">
             <HandCoins className="text-primary size-3.5" /> Manager store
           </p>
-          <h1 className="font-display text-3xl font-bold tracking-tight">
+          <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
             {isSuper ? "Super Admin — everything unlocked" : "Upgrade your manager"}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
@@ -222,7 +223,7 @@ export default function Store() {
         )}
 
         {/* Catalogue */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           {items.map((item) => (
             <StoreItemCard
               key={item.id}
@@ -248,7 +249,9 @@ export default function Store() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {purchases.length === 0 ? (
+            {purchases.length === 0 && storeResult === undefined ? (
+              <SkeletonList count={3} />
+            ) : purchases.length === 0 ? (
               <p className="text-muted-foreground py-6 text-center text-sm">
                 {isSuper
                   ? "No purchases needed — everything is unlocked."
@@ -257,18 +260,18 @@ export default function Store() {
             ) : (
               <ul className="space-y-2">
                 {purchases.map((p) => (
-                  <li
-                    key={p._id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
-                  >
+                <li
+                  key={p._id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2.5"
+                >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">{p.itemName}</p>
-                      <p className="text-muted-foreground text-[11px]">
+                      <p className="text-muted-foreground truncate text-[11px]">
                         {formatWhen(p.createdAt)}
                         {p.decidedBy ? ` · decided by ${p.decidedBy}` : ""}
                       </p>
                       {p.note ? (
-                        <p className="text-muted-foreground mt-0.5 text-[11px] italic">
+                        <p className="text-muted-foreground mt-0.5 text-[11px] break-words italic">
                           “{p.note}”
                         </p>
                       ) : null}
@@ -461,7 +464,7 @@ function StoreItemCard({
           </div>
         ) : (
           <Button
-            className="w-full"
+            className="w-full py-3 text-base font-semibold rounded-xl sm:py-2 sm:text-sm"
             variant={pending || owned ? "outline" : "default"}
             disabled={busy || pending || owned}
             onClick={onBuy}
