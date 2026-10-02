@@ -1,7 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireSuperAdmin } from "./lib";
-import { houseValidator, HOUSES } from "./schema";
+import { houseValidator, HOUSES, type House } from "./schema";
+import { getSettingsRow, normalizeSettings } from "./adminConfig";
+import { DEFAULT_HOUSES } from "./defaults";
 
 /**
  * ── House crests ────────────────────────────────────────────────────────
@@ -112,6 +114,117 @@ export const listHouseLogos = query({
       // renders the default themed crest for every house.
     }
     return map as Record<(typeof HOUSES)[number], string | null>;
+  },
+});
+
+// ── The house list ───────────────────────────────────────────────────────
+
+/** One row of the house list, as consumed by the client. */
+export interface HouseListRow {
+  /**
+   * The STABLE house key (`"Fire" | "Earth" | "Wind" | "Water"`), NOT a
+   * Convex document id.
+   *
+   * WHY THERE IS NO `_id` HERE: houses are a fixed four-value union in
+   * `schema.ts` (`HOUSES`) rather than a `houses` table, so there is no
+   * document to point at. This is the value stored in
+   * `users.supportedHouse` and the value the house mutations validate, which
+   * makes it the correct key for every join, filter and equality check. A
+   * `name` may be renamed by the Super Admin, so it is deliberately NOT used
+   * as an identifier.
+   */
+  id: House;
+  /** Display name — the Super Admin's rename, or the built-in default. */
+  name: string;
+  /** Brand colour as a validated `#rrggbb` string. */
+  color: string;
+  /** Resolved crest URL, or null when the house uses its themed default. */
+  logoUrl: string | null;
+  /** House motto (may be blank). */
+  motto: string;
+}
+
+/**
+ * PUBLIC query: every house registered in the system, ready to render a
+ * picker from. This is what the profile house selector reads, so a dropdown
+ * can never be built from a hardcoded list that drifts from the schema.
+ *
+ * Data is layered, most specific last:
+ *   1. `HOUSES`  — the authoritative set of house keys.
+ *   2. branding  — Super Admin renames / colours / mottos (config row).
+ *   3. crests    — uploaded blobs in `houseLogos`, resolved to served URLs.
+ *
+ * NEVER throws and never returns an empty list: a config or storage failure
+ * degrades to the built-in `DEFAULT_HOUSES` palette, so the client always has
+ * the four real houses to offer.
+ */
+export const listHouses = query({
+  args: {},
+  handler: async (ctx): Promise<HouseListRow[]> => {
+    // ── 1. Authoritative key set (never dynamic) ──
+    const keys = HOUSES.filter(
+      (h): h is House => (DEFAULT_HOUSES as Record<string, unknown>)[h] !== undefined,
+    );
+    // Defensive: HOUSES is a compile-time constant, so this is unreachable
+    // unless a future edit desyncs the schema from the default palette.
+    if (keys.length === 0) return [];
+
+    const rows: HouseListRow[] = keys.map((id) => ({
+      id,
+      name: DEFAULT_HOUSES[id]?.name ?? id,
+      color: DEFAULT_HOUSES[id]?.color ?? "#888888",
+      logoUrl: null,
+      motto: DEFAULT_HOUSES[id]?.motto ?? "",
+    }));
+
+    // ── 2. Super Admin branding ──
+    try {
+      const settings = normalizeSettings(await getSettingsRow(ctx));
+      for (const row of rows) {
+        const brand = settings.houses[row.id];
+        if (!brand) continue;
+        if (brand.name.trim().length > 0) row.name = brand.name.trim();
+        // `normalizeSettings` already guarantees a valid hex, but re-checking
+        // here keeps an inline style from ever receiving a bad value.
+        if (/^#[0-9a-fA-F]{6}$/.test(brand.color.trim())) {
+          row.color = brand.color.trim();
+        }
+        if (typeof brand.motto === "string") row.motto = brand.motto;
+        // A configured https logo is a valid fallback for the crest.
+        const url = validateLogoUrl(brand.logoUrl ?? "");
+        if (url) row.logoUrl = url;
+      }
+    } catch {
+      // Built-in defaults already fill every row.
+    }
+
+    // ── 3. Uploaded crests (highest precedence) ──
+    try {
+      const logoRows = await ctx.db.query("houseLogos").collect();
+      for (const logoRow of logoRows) {
+        // Defensive: only a known house key is written back onto the list.
+        const target = rows.find((r) => r.id === logoRow.house);
+        if (!target) continue;
+        if (logoRow.storageId) {
+          const storageId = safeStorageId(logoRow.storageId);
+          if (storageId) {
+            try {
+              target.logoUrl = await ctx.storage.getUrl(storageId);
+              continue;
+            } catch {
+              // Blob deleted out from under us — keep the configured/default
+              // crest rather than failing the whole query.
+            }
+          }
+        }
+        const legacy = validateLogoUrl(logoRow.logoUrl ?? "");
+        if (legacy) target.logoUrl = legacy;
+      }
+    } catch {
+      // A storage hiccup must not empty the picker.
+    }
+
+    return rows;
   },
 });
 

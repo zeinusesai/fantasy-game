@@ -1,9 +1,10 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { query } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
-import { readUserCosmetics } from "./lib";
+import { readUserCosmetics, requireUser } from "./lib";
 import { getLeaderboardRows } from "./lib";
 import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle, normalizeHouse } from "./defaults";
+import { HOUSES, type House } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 
 /**
