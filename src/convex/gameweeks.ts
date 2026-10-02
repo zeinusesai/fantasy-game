@@ -11,6 +11,7 @@ import {
   transferLockReason,
 } from "./gameweekStructure";
 import { stageValidator } from "./schema";
+import { resolveMatchWinner } from "./penalties";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
@@ -464,10 +465,7 @@ export const settleGameweek = mutation({
         if (pred.correct !== undefined) continue; // already resolved (idempotent)
         const match = matches.find((m) => m.stage === pred.stage);
         if (!match || match.status !== "completed") continue;
-        const home = Number(match.homeGoals) || 0;
-        const away = Number(match.awayGoals) || 0;
-        const actualWinner =
-          home > away ? match.homeHouse : away > home ? match.awayHouse : null;
+        const actualWinner = resolveMatchWinner(match);
         const correct = actualWinner !== null && actualWinner === pred.pick;
         await ctx.db.patch(pred._id, { correct, awarded: correct ? 2 : 0 });
         if (correct) {

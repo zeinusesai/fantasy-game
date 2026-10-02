@@ -14,6 +14,12 @@ import { getSettingsRow, normalizeSettings } from "./adminConfig";
 import type { Id } from "./_generated/dataModel";
 import { resolveFormation } from "./formations";
 import { checkLineupRules } from "./lineups";
+import {
+  validatePenaltyShootout,
+  derivePenaltyPatch,
+  resolveMatchWinner,
+  resolveMatchLoser,
+} from "./penalties";
 
 // ── Public queries ───────────────────────────────────────────────────────
 
@@ -631,6 +637,11 @@ export const saveMatch = mutation({
     status: matchStatusValidator,
     kickoffLabel: v.optional(v.string()),
     potmPlayerId: v.optional(v.id("players")),
+    // Penalty shootout input. Optional + validated by the shared rules in
+    // convex/penalties.ts; `penaltyWinnerId` is derived server-side and is
+    // deliberately NOT accepted from the client.
+    homePenaltiesScore: v.optional(v.number()),
+    awayPenaltiesScore: v.optional(v.number()),
     lines: v.array(matchLineValidator),
   },
   handler: async (ctx, args) => {
@@ -670,6 +681,26 @@ export const saveMatch = mutation({
       throw new Error("Player of the Match must be one of the players in the report.");
     }
 
+    // Penalty shootout rules. Validated BEFORE any write so a bad
+    // submission can never leave a half-applied match behind.
+    const penaltyError = validatePenaltyShootout({
+      stage: args.stage,
+      homeGoals: args.homeGoals,
+      awayGoals: args.awayGoals,
+      homePenaltiesScore: args.homePenaltiesScore,
+      awayPenaltiesScore: args.awayPenaltiesScore,
+    });
+    if (penaltyError) throw new Error(penaltyError);
+    const penaltyPatch = derivePenaltyPatch({
+      stage: args.stage,
+      homeHouse: args.homeHouse,
+      awayHouse: args.awayHouse,
+      homeGoals: args.homeGoals,
+      awayGoals: args.awayGoals,
+      homePenaltiesScore: args.homePenaltiesScore,
+      awayPenaltiesScore: args.awayPenaltiesScore,
+    });
+
     const playerDocs = await Promise.all(args.lines.map((l) => ctx.db.get(l.playerId)));
     playerDocs.forEach((p, i) => {
       if (!p || !p.active) {
@@ -702,6 +733,7 @@ export const saveMatch = mutation({
         status: args.status,
         kickoffLabel: args.kickoffLabel?.trim() || undefined,
         potmPlayerId: args.potmPlayerId,
+        ...penaltyPatch,
       });
     } else {
       matchId = await ctx.db.insert("matches", {
@@ -713,6 +745,7 @@ export const saveMatch = mutation({
         status: args.status,
         kickoffLabel: args.kickoffLabel?.trim() || undefined,
         potmPlayerId: args.potmPlayerId,
+        ...penaltyPatch,
         createdAt: Date.now(),
       });
     }
@@ -782,6 +815,91 @@ export const saveMatch = mutation({
     }
 
     return matchId;
+  },
+});
+
+/**
+ * Record (or clear) the penalty shootout for a fixture that is already
+ * saved, without touching the match report or re-distributing fantasy
+ * points. This is the narrow path the Admin "Penalty shootout" toggle
+ * uses once regulation goals are already on file.
+ *
+ * Returns `{ ok: false, error }` for every expected rejection (tied PK
+ * scores, penalties on a match that wasn't level, non-knockout stage) so
+ * the client can toast the reason inline without a server exception.
+ *
+ * FANTASY SCORING ISOLATION: this mutation writes ONLY the five shootout
+ * fields. It never inserts a `matchPlayers` row and never calls
+ * recalculateMatchPoints, so penalty kicks cannot reach player points, the
+ * golden boot, or the leaderboard. The regulation `homeGoals`/`awayGoals`
+ * that DO feed those systems are left exactly as they are.
+ */
+export const recordPenaltyShootout = mutation({
+  args: {
+    matchId: v.id("matches"),
+    homePenaltiesScore: v.optional(v.number()),
+    awayPenaltiesScore: v.optional(v.number()),
+    /** Explicitly clear the shootout (set both PK scores to null/0). */
+    clear: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) return { ok: false as const, error: "Match not found." };
+
+      // Clearing is always legal — it just removes the shootout fields.
+      if (args.clear) {
+        await ctx.db.patch(args.matchId, {
+          goesToPenalties: false,
+          homePenaltiesScore: undefined,
+          awayPenaltiesScore: undefined,
+          penaltyWinnerId: undefined,
+        });
+        return { ok: true as const, cleared: true, penaltyWinnerId: null };
+      }
+
+      const homePen = args.homePenaltiesScore ?? null;
+      const awayPen = args.awayPenaltiesScore ?? null;
+      if (homePen === null || awayPen === null) {
+        return {
+          ok: false as const,
+          error: "Enter both penalty scores, or clear the shootout.",
+        };
+      }
+
+      const error = validatePenaltyShootout({
+        stage: match.stage,
+        homeGoals: match.homeGoals,
+        awayGoals: match.awayGoals,
+        homePenaltiesScore: homePen,
+        awayPenaltiesScore: awayPen,
+      });
+      if (error) return { ok: false as const, error };
+
+      const patch = derivePenaltyPatch({
+        stage: match.stage,
+        homeHouse: match.homeHouse,
+        awayHouse: match.awayHouse,
+        homeGoals: match.homeGoals,
+        awayGoals: match.awayGoals,
+        homePenaltiesScore: homePen,
+        awayPenaltiesScore: awayPen,
+      });
+      await ctx.db.patch(args.matchId, patch);
+
+      return {
+        ok: true as const,
+        cleared: false,
+        penaltyWinnerId: patch.penaltyWinnerId ?? null,
+        homePenaltiesScore: patch.homePenaltiesScore ?? 0,
+        awayPenaltiesScore: patch.awayPenaltiesScore ?? 0,
+        goesToPenalties: patch.goesToPenalties,
+      };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save the penalty shootout. Try again.");
+    }
   },
 });
 

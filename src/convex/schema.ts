@@ -244,6 +244,23 @@ const schema = defineSchema(
       // PotM player id
       potmPlayerId: v.optional(v.id("players")),
 
+      // ── Penalty shootout / tie-breaker ──────────────────────────────
+      // NOTE: the advancing house is stored as a `houseValidator` string,
+      // NOT `v.id("houses")` — this project has no `houses` table (houses
+      // are a 4-value union, `houseLogos` is the only house-keyed table).
+      // A v.id() would be unsatisfiable at runtime.
+      //
+      // All fields are OPTIONAL so every pre-existing match row stays
+      // valid without a backfill. `isKnockout` falls back to the stage via
+      // isKnockoutMatch() in convex/penalties.ts, so old rows behave
+      // correctly. The pair (home/awayPenaltiesScore) is a shootout
+      // OUTCOME only — it never feeds player fantasy points.
+      isKnockout: v.optional(v.boolean()),
+      goesToPenalties: v.optional(v.boolean()),
+      homePenaltiesScore: v.optional(v.number()),
+      awayPenaltiesScore: v.optional(v.number()),
+      penaltyWinnerId: v.optional(houseValidator),
+
       // ── Rich match-center metadata (all optional — safe defaults) ──
       matchDate: v.optional(v.string()), // display label e.g. "Fri 14 Nov, 6 PM"
       timelineEvents: v.optional(

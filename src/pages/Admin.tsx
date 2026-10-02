@@ -41,6 +41,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
+import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
+import {
+  isKnockoutMatch,
+  isKnockoutStage,
+  validatePenaltyShootout,
+} from "@/convex/penalties";
 import { MAX_PRICE_AED } from "@/convex/storeItems";
 import type { PlayerStatusLabel } from "@/convex/schema";
 import { avatarPresetUrl } from "@/lib/fantasy";
@@ -171,6 +177,7 @@ import {
   Shield,
   SlidersHorizontal,
   Trash2,
+  Trophy,
   UserCog,
   Users,
   Users2,
@@ -1089,12 +1096,174 @@ const emptyLine = (playerId: Id<"players">): LineDraft => ({
   cleanSheet: false,
 });
 
+/**
+ * Inline PK editor for an already-recorded knockout fixture.
+ *
+ * Renders nothing unless the match is a knockout that finished level on
+ * goals — the only state a shootout can apply to. Every failure path
+ * (tied PK scores, server rejection) surfaces as a toast rather than an
+ * exception, because the mutation returns {ok,error} rather than throwing.
+ */
+function RecordedShootoutEditor({
+  match,
+  onSave,
+  onClear,
+}: {
+  match: {
+    _id: string;
+    stage: string;
+    homeHouse: any;
+    awayHouse: any;
+    homeGoals: number;
+    awayGoals: number;
+    homePenaltiesScore?: number | null;
+    awayPenaltiesScore?: number | null;
+  };
+  onSave: (home: number, away: number) => Promise<any>;
+  onClear: () => Promise<any>;
+}) {
+  const eligible = isKnockoutMatch(match) && match.homeGoals === match.awayGoals;
+  const [open, setOpen] = useState(false);
+  const [home, setHome] = useState(String(match.homePenaltiesScore ?? ""));
+  const [away, setAway] = useState(String(match.awayPenaltiesScore ?? ""));
+  const [busy, setBusy] = useState(false);
+
+  if (!eligible) return null;
+
+  const h = parseInt(home, 10);
+  const a = parseInt(away, 10);
+  const error = validatePenaltyShootout({
+    stage: match.stage as any,
+    homeGoals: match.homeGoals,
+    awayGoals: match.awayGoals,
+    homePenaltiesScore: home === "" ? null : h,
+    awayPenaltiesScore: away === "" ? null : a,
+  });
+  const hasShootout =
+    match.homePenaltiesScore != null && match.awayPenaltiesScore != null;
+
+  const submit = async () => {
+    if (error || Number.isNaN(h) || Number.isNaN(a)) {
+      toast.error(error ?? "Enter both penalty scores.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await onSave(h, a);
+      if (res && res.ok) {
+        toast.success("Match result saved with penalty shootout outcome!");
+        setOpen(false);
+      } else {
+        toast.error(res?.error ?? "Could not save the penalty shootout.");
+      }
+    } catch (err) {
+      console.error("Failed to save penalty shootout:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Could not save the penalty shootout.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      const res = await onClear();
+      if (res && res.ok) {
+        toast.success("Penalty shootout cleared.");
+        setHome("");
+        setAway("");
+        setOpen(false);
+      } else {
+        toast.error(res?.error ?? "Could not clear the penalty shootout.");
+      }
+    } catch (err) {
+      console.error("Failed to clear penalty shootout:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Could not clear the penalty shootout.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300"
+      >
+        <Trophy className="size-3" />
+        {hasShootout ? "Edit shootout" : "Record shootout"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-1">
+          <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            {match.homeHouse} PK
+          </Label>
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={20}
+            value={home}
+            onChange={(e) => setHome(e.target.value)}
+            className="h-9"
+          />
+        </div>
+        <div className="grid gap-1">
+          <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            {match.awayHouse} PK
+          </Label>
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={20}
+            value={away}
+            onChange={(e) => setAway(e.target.value)}
+            className="h-9"
+          />
+        </div>
+      </div>
+      {error && <p className="text-destructive mt-1 text-[11px]">{error}</p>}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <Button size="sm" onClick={submit} disabled={busy || !!error}>
+          {busy ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
+          Save shootout
+        </Button>
+        {hasShootout && (
+          <Button size="sm" variant="ghost" onClick={clear} disabled={busy}>
+            Clear
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function MatchesTab() {
   const playersResult = useQuery(api.players.listPlayers);
   const matchesResult = useQuery(api.matches.listMatches);
   const players = playersResult ?? [];
   const matches = matchesResult ?? [];
   const saveMatch = useMutation(api.matches.saveMatch);
+  const recordPenaltyShootout = useMutation(api.matches.recordPenaltyShootout);
   const scheduleMatch = useMutation(api.matches.scheduleMatch);
   const deleteMatch = useMutation(api.matches.deleteMatch);
   const setMatchStatus = useMutation(api.matches.setMatchStatus);
@@ -1104,6 +1273,11 @@ function MatchesTab() {
   const [awayHouse, setAwayHouse] = useState<House>("Earth");
   const [homeGoals, setHomeGoals] = useState("0");
   const [awayGoals, setAwayGoals] = useState("0");
+  // Penalty shootout draft. `shootoutOn` is the admin's explicit toggle;
+  // the PK fields only render when it is on AND the stage is a knockout.
+  const [shootoutOn, setShootoutOn] = useState(false);
+  const [homePk, setHomePk] = useState("");
+  const [awayPk, setAwayPk] = useState("");
   const [status, setStatus] = useState<"scheduled" | "live" | "completed">("completed");
   const [kickoffLabel, setKickoffLabel] = useState("");
   const [potmPlayerId, setPotmPlayerId] = useState<string>("");
@@ -1116,6 +1290,27 @@ function MatchesTab() {
   );
   const homePlayers = players.filter((p) => p.house === homeHouse);
   const awayPlayers = players.filter((p) => p.house === awayHouse);
+
+  // Knockout + level-on-goals is the only situation a shootout applies to.
+  const stageIsKnockout = isKnockoutStage(stage);
+  const goalsLevel = parseInt(homeGoals, 10) === parseInt(awayGoals, 10);
+  const shootoutEligible = stageIsKnockout && goalsLevel;
+  // Turning the toggle off (or switching to a group fixture) must drop a
+  // stale PK entry rather than submit it.
+  const shootoutActive = shootoutOn && shootoutEligible;
+
+  // Client-side mirror of the server rule so the admin sees the exact
+  // rejection reason before spending a round trip. The server re-validates;
+  // this is UX, not the security boundary.
+  const penaltyProblem = shootoutActive
+    ? validatePenaltyShootout({
+        stage,
+        homeGoals: parseInt(homeGoals, 10) || 0,
+        awayGoals: parseInt(awayGoals, 10) || 0,
+        homePenaltiesScore: homePk === "" ? null : parseInt(homePk, 10),
+        awayPenaltiesScore: awayPk === "" ? null : parseInt(awayPk, 10),
+      })
+    : null;
 
   const addLine = (playerId: Id<"players">) => {
     if (lines.some((l) => l.playerId === playerId)) return;
@@ -1135,6 +1330,10 @@ function MatchesTab() {
       toast.error("Add at least one player line for a completed match.");
       return;
     }
+    if (penaltyProblem) {
+      toast.error(penaltyProblem);
+      return;
+    }
     setSaving(true);
     try {
       await saveMatch({
@@ -1143,6 +1342,12 @@ function MatchesTab() {
         awayHouse,
         homeGoals: parseInt(homeGoals) || 0,
         awayGoals: parseInt(awayGoals) || 0,
+        homePenaltiesScore: shootoutActive
+          ? parseInt(homePk, 10) || 0
+          : undefined,
+        awayPenaltiesScore: shootoutActive
+          ? parseInt(awayPk, 10) || 0
+          : undefined,
         status,
         kickoffLabel: kickoffLabel.trim() || undefined,
         potmPlayerId: potmPlayerId ? (potmPlayerId as Id<"players">) : undefined,
@@ -1161,9 +1366,16 @@ function MatchesTab() {
           cleanSheet: l.cleanSheet,
         })),
       });
-      toast.success("Match saved — fantasy points have been distributed.");
+      toast.success(
+        shootoutActive
+          ? "Match result saved with penalty shootout outcome!"
+          : "Match saved — fantasy points have been distributed.",
+      );
       setLines([]);
       setPotmPlayerId("");
+      setShootoutOn(false);
+      setHomePk("");
+      setAwayPk("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save match.");
     } finally {
@@ -1285,6 +1497,73 @@ function MatchesTab() {
                   className="h-9"
                 />
               </div>
+            </div>
+
+            {/* ── Penalty shootout ──
+                Only a knockout fixture that finished level on goals can go
+                to penalties. The toggle is disabled (with a reason) until
+                both conditions hold, so an admin can never submit a
+                shootout that the server will reject. */}
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Trophy className="size-4 text-amber-400" />
+                  <Label className="text-sm font-semibold">Penalty shootout</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground text-xs">
+                    {!stageIsKnockout
+                      ? "Knockout fixtures only"
+                      : !goalsLevel
+                        ? "Available once the score is level"
+                        : shootoutActive
+                          ? "Shootout recorded"
+                          : "Ready"}
+                  </span>
+                  <Switch
+                    checked={shootoutActive}
+                    disabled={!shootoutEligible}
+                    onCheckedChange={(v) => {
+                      setShootoutOn(v);
+                      if (!v) {
+                        setHomePk("");
+                        setAwayPk("");
+                      }
+                    }}
+                    aria-label="Toggle penalty shootout"
+                  />
+                </div>
+              </div>
+
+              {shootoutActive && (
+                <div className="mt-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    {numInput(homePk, setHomePk, `${homeHouse} PK`)}
+                    {numInput(awayPk, setAwayPk, `${awayHouse} PK`)}
+                  </div>
+                  {/* Derived winner preview — advisory only; the server
+                      recomputes and stores penaltyWinnerId itself. */}
+                  {!penaltyProblem &&
+                  homePk !== "" &&
+                  awayPk !== "" &&
+                  parseInt(homePk, 10) !== parseInt(awayPk, 10) && (
+                    <p className="text-xs font-semibold text-amber-200">
+                      {parseInt(homePk, 10) > parseInt(awayPk, 10)
+                        ? `${homeHouse} advances on penalties.`
+                        : `${awayHouse} advances on penalties.`}
+                    </p>
+                  )}
+                  {penaltyProblem && (
+                    <p className="text-destructive text-xs font-medium">
+                      {penaltyProblem}
+                    </p>
+                  )}
+                  <p className="text-muted-foreground text-[11px]">
+                    Penalty kicks decide the fixture only. They are not
+                    player statistics, so they never award fantasy points.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Player lines */}
@@ -1439,11 +1718,36 @@ function MatchesTab() {
                   <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-widest">
                     {STAGE_LABELS[m.stage]} · {m.status}
                   </p>
-                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                  <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
                     <HouseCrest house={m.homeHouse} size={20} /> {m.homeHouse}{" "}
-                    <span className="font-score text-primary">{m.homeGoals}–{m.awayGoals}</span>{" "}
+                    <span className="font-score text-primary">
+                      <ScoreLine match={m} />
+                    </span>{" "}
                     {m.awayHouse} <HouseCrest house={m.awayHouse} size={20} />
+                    <PenaltyBadge match={m} />
                   </p>
+                  {/* Inline shootout editor for a recorded knockout that
+                      finished level. Uses recordPenaltyShootout, which
+                      touches ONLY the shootout fields — it cannot disturb
+                      the match report or re-award fantasy points. */}
+                  <RecordedShootoutEditor
+                    match={m}
+                    onSave={async (home, away) => {
+                      const res = await recordPenaltyShootout({
+                        matchId: m._id,
+                        homePenaltiesScore: home,
+                        awayPenaltiesScore: away,
+                      });
+                      return res;
+                    }}
+                    onClear={async () => {
+                      const res = await recordPenaltyShootout({
+                        matchId: m._id,
+                        clear: true,
+                      });
+                      return res;
+                    }}
+                  />
                 </div>
                 <div className="flex shrink-0 gap-1">
                   {m.status !== "completed" && (

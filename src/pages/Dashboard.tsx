@@ -12,6 +12,7 @@ import {
 } from "@/components/DashboardWidgets";
 import { HouseCrest, PositionChip } from "@/components/houses";
 import { ScoringRulesCard } from "@/components/ScoringRulesCard";
+import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
 import { Year12Celebration } from "@/components/Year12Celebration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -301,8 +302,11 @@ export default function Dashboard() {
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
                         <HouseCrest house={m.homeHouse} size={22} /> {m.homeHouse}
                       </span>
-                      <span className="font-score rounded-md bg-primary/15 px-2 py-0.5 text-sm font-bold text-primary">
-                        {m.homeGoals}–{m.awayGoals}
+                      <span className="flex flex-col items-center gap-0.5">
+                        <span className="font-score rounded-md bg-primary/15 px-2 py-0.5 text-sm font-bold text-primary">
+                          <ScoreLine match={m} />
+                        </span>
+                        <PenaltyBadge match={m} />
                       </span>
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
                         {m.awayHouse} <HouseCrest house={m.awayHouse} size={22} />

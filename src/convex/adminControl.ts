@@ -18,6 +18,7 @@ import {
   resolveFormation,
 } from "./formations";
 import { formatMoney, toSafeAmount } from "./configDefaults";
+import { resolveMatchWinner } from "./penalties";
 import { CHIP_GW1, CHIP_GW2 } from "./configDefaults";
 import { houseValidator, HOUSES, positionValidator, type House, type Position } from "./schema";
 import { cleanText } from "./defaults";
@@ -827,10 +828,16 @@ export const resolvePredictions = mutation({
       if (match.status !== "completed") {
         throw new Error("Only completed matches can be resolved.");
       }
-      const home = Number(match.homeGoals) || 0;
-      const away = Number(match.awayGoals) || 0;
-      const winner = home > away ? match.homeHouse : away > home ? match.awayHouse : null;
-      if (winner === null) throw new Error("That match was a draw — no prediction to resolve.");
+      // A knockout level on goals is decided by the shootout, so the
+      // winner comes from the shared tie-breaker rather than a raw
+      // home-vs-away goal comparison (which returned null for every
+      // penalty-decided fixture).
+      const winner = resolveMatchWinner(match);
+      if (winner === null) {
+        throw new Error(
+          "That match is still undecided — record the penalty shootout before resolving predictions.",
+        );
+      }
 
       const preds = await ctx.db
         .query("predictions")

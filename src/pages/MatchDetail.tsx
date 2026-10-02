@@ -27,6 +27,12 @@ import { PitchView, type PitchPlayer } from "@/components/PitchView";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PositionChip } from "@/components/houses";
 import { MAX_SUBSTITUTES } from "@/convex/configDefaults";
+import {
+  ScoreLine,
+  PenaltyBadge,
+  WinnerTick,
+  ShootoutSummary,
+} from "@/components/ScoreLine";
 import { DEFAULT_FORMATION, inferFormation, resolveFormation } from "@/convex/formations";
 import type { Position } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -266,22 +272,30 @@ function MatchHeader({
           <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-4">
             <HouseCrest house={match.homeHouse} size={72} />
             <span className="font-display text-2xl font-bold">{match.homeHouse}</span>
+            <WinnerTick match={match} house={match.homeHouse} className="size-7" />
           </div>
           <div className="text-center">
             <p className="font-score text-5xl font-extrabold tracking-tight sm:text-6xl">
-              {match.homeGoals}–{match.awayGoals}
+              <ScoreLine match={match} />
             </p>
             {potmName && (
               <Badge className="mt-3 gap-1 border-amber-400/40 bg-amber-400/15 py-1 text-amber-200">
                 <Award className="size-3" /> PotM: {potmName}
               </Badge>
             )}
+            {/* Shootout outcome. Renders nothing for a match decided in
+                normal time, so ordinary fixtures are unchanged. */}
+            <div className="mt-2 flex flex-col items-center gap-1">
+              <PenaltyBadge match={match} className="text-xs" />
+              <ShootoutSummary match={match} className="max-w-[16rem]" />
+            </div>
           </div>
           <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-4">
             <span className="font-display order-2 text-2xl font-bold sm:order-1">
               {match.awayHouse}
             </span>
             <HouseCrest house={match.awayHouse} size={72} />
+            <WinnerTick match={match} house={match.awayHouse} className="size-7" />
           </div>
         </div>
       </CardContent>

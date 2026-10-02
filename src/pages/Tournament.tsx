@@ -3,6 +3,8 @@ import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { HouseCrest } from "@/components/houses";
+import { ScoreLine, PenaltyBadge, WinnerTick } from "@/components/ScoreLine";
+import { resolveMatchWinner, resolveMatchLoser } from "@/convex/penalties";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,7 +12,7 @@ import {
   STAGE_LABELS,
   STAGE_ORDER,
 } from "@/lib/fantasy";
-import type { Stage } from "@/convex/schema";
+import type { Stage, House } from "@/convex/schema";
 import { Crown, Medal, Star, Trophy } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -31,23 +33,35 @@ export default function Tournament() {
 
   // Automatic progression: winners of the semis advance to the Final,
   // losers drop to the 3rd place match — shown as soon as both are done.
+  //
+  // The winner comes from the shared tie-breaker (convex/penalties.ts), NOT
+  // from a raw goal comparison. A knockout fixture can finish level on goals
+  // and be decided by a shootout; the old `homeGoals >= awayGoals` silently
+  // handed every such draw to the HOME house, which put the wrong house in
+  // the Final. resolveMatchWinner returns null for a genuinely undecided
+  // match, and a null finalist is filtered out below rather than crashing.
   const completedSemis = semis.filter((m) => m.status === "completed");
-  const winnerOf = (m: (typeof semis)[number]) =>
-    m.homeGoals >= m.awayGoals ? m.homeHouse : m.awayHouse;
-  const loserOf = (m: (typeof semis)[number]) =>
-    m.homeGoals >= m.awayGoals ? m.awayHouse : m.homeHouse;
-  const finalists =
+  const winnerOf = (m: (typeof semis)[number]) => resolveMatchWinner(m);
+  const loserOf = (m: (typeof semis)[number]) => resolveMatchLoser(m);
+  const finalistHouses =
     completedSemis.length === 2 ? completedSemis.map(winnerOf) : null;
-  const bronzeTeams =
-    completedSemis.length === 2 ? completedSemis.map(loserOf) : null;
+  // A semi with no recorded shootout yet is genuinely undecided — hold the
+  // bracket back rather than guessing a finalist. The type predicate on
+  // `every` narrows the array itself, so downstream indexing is House, not
+  // House | null.
+  const finalists: House[] | null =
+    finalistHouses && finalistHouses.every((h): h is House => h !== null)
+      ? finalistHouses
+      : null;
+  const loserHouses = finalists ? completedSemis.map(loserOf) : [];
+  const bronzeTeams: House[] | null =
+    loserHouses.length === 2 && loserHouses.every((h): h is House => h !== null)
+      ? loserHouses
+      : null;
 
   const completed = (matches ?? []).filter((m) => m.status === "completed");
   const champion =
-    finalMatch?.status === "completed"
-      ? finalMatch.homeGoals > finalMatch.awayGoals
-        ? finalMatch.homeHouse
-        : finalMatch.awayHouse
-      : null;
+    finalMatch?.status === "completed" ? resolveMatchWinner(finalMatch) : null;
 
   return (
     <AppNav>
@@ -205,13 +219,17 @@ export default function Tournament() {
                   <span className="text-muted-foreground w-32 shrink-0 text-xs font-semibold uppercase tracking-wide">
                     {STAGE_LABELS[m.stage]}
                   </span>
-                  <span className="flex flex-1 items-center justify-center gap-3">
+                  <span className="flex flex-1 flex-wrap items-center justify-center gap-3">
                     <span className="flex items-center gap-2 text-sm font-semibold">
                       <HouseCrest house={m.homeHouse} size={24} /> {m.homeHouse}
+                      <WinnerTick match={m} house={m.homeHouse} />
                     </span>
                     {m.status === "completed" ? (
-                      <span className="font-score rounded-md bg-primary/15 px-2.5 py-0.5 text-base font-bold text-primary">
-                        {m.homeGoals}–{m.awayGoals}
+                      <span className="flex flex-col items-center gap-1">
+                        <span className="font-score rounded-md bg-primary/15 px-2.5 py-0.5 text-base font-bold text-primary">
+                          <ScoreLine match={m} />
+                        </span>
+                        <PenaltyBadge match={m} />
                       </span>
                     ) : (
                       <Badge variant={m.status === "live" ? "destructive" : "secondary"}>
@@ -220,6 +238,7 @@ export default function Tournament() {
                     )}
                     <span className="flex items-center gap-2 text-sm font-semibold">
                       {m.awayHouse} <HouseCrest house={m.awayHouse} size={24} />
+                      <WinnerTick match={m} house={m.awayHouse} />
                     </span>
                   </span>
                   <span className="text-muted-foreground w-32 shrink-0 text-right text-xs">
@@ -267,10 +286,14 @@ function MatchCard({
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 font-semibold">
           <HouseCrest house={match.homeHouse} size={30} /> {match.homeHouse}
+          <WinnerTick match={match} house={match.homeHouse} />
         </span>
         {match.status === "completed" ? (
-          <span className="font-score rounded-lg bg-primary/20 px-3 py-1 text-xl font-extrabold text-primary">
-            {match.homeGoals}–{match.awayGoals}
+          <span className="flex flex-col items-center gap-1">
+            <span className="font-score rounded-lg bg-primary/20 px-3 py-1 text-xl font-extrabold text-primary">
+              <ScoreLine match={match} />
+            </span>
+            <PenaltyBadge match={match} />
           </span>
         ) : (
           <Badge variant={match.status === "live" ? "destructive" : "secondary"}>
@@ -279,6 +302,7 @@ function MatchCard({
         )}
         <span className="flex items-center gap-2 font-semibold">
           {match.awayHouse} <HouseCrest house={match.awayHouse} size={30} />
+          <WinnerTick match={match} house={match.awayHouse} />
         </span>
       </div>
     </button>
