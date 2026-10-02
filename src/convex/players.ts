@@ -249,66 +249,216 @@ export const addPlayer = mutation({
   },
 });
 
+/**
+ * Clamp a raw price into the effective market window and round it to a whole
+ * dollar. Returns null for anything that is not a usable positive number, so
+ * the caller can raise a clean message instead of writing NaN/Infinity.
+ *
+ * The window comes from the Super Admin's market rules (defaults $4m–$22m) and
+ * is re-asserted here: a corrupt config can never produce a min > max.
+ */
+function clampPrice(
+  value: unknown,
+  min: number,
+  max: number,
+): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const lo = Math.max(0, Number.isFinite(min) ? min : 0);
+  const hi = Math.max(lo, Number.isFinite(max) ? max : lo);
+  return Math.round(Math.max(lo, Math.min(hi, n)));
+}
+
+/**
+ * Normalise a status label. Accepts the canonical labels plus the common
+ * synonyms an admin might type, and returns null for a blank string (clear)
+ * or throws for an unrecognised one.
+ */
+function resolveStatusLabel(value: string): PlayerStatusLabel | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null; // explicit clear
+  const lower = trimmed.toLowerCase();
+  const direct = PLAYER_STATUS_LABELS.find((s) => s.toLowerCase() === lower);
+  if (direct) return direct;
+  const aliases: Record<string, PlayerStatusLabel> = {
+    "expected sub": "Sub",
+    "likely sub": "Sub",
+    "not playing": "Not Play",
+    "out": "Not Play",
+    "unavailable": "Not Play",
+    "starting": "Expected to Start",
+  };
+  const aliased = aliases[lower];
+  if (aliased) return aliased;
+  throw new Error(
+    `Invalid status "${trimmed}" — must be ${PLAYER_STATUS_LABELS.join(", ")}.`,
+  );
+}
+
+/**
+ * Normalise a photo value. Returns the trimmed URL to set, or undefined to
+ * clear (Convex removes an optional field when it is patched to undefined —
+ * the same mechanism setPlayerImage uses). Only called when the caller
+ * actually sent the field, so "absent" never reaches this function.
+ */
+function normalizeImage(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined; // clear
+  if (trimmed.length > 2_000_000) {
+    throw new Error("Image URL/data is too large — use an image link under ~1.5MB.");
+  }
+  const isHttp = /^https?:\/\//i.test(trimmed);
+  const isData = /^data:image\//i.test(trimmed);
+  if (!isHttp && !isData) {
+    throw new Error("Invalid image — paste an http(s):// or data:image/… URL.");
+  }
+  return trimmed;
+}
+
+/**
+ * Super Admin only: partial update of a player.
+ *
+ * Every field is optional and only the ones actually sent are written, so the
+ * caller can update a single column (e.g. just the status label) without
+ * resending the whole record. Unknown/blank values are validated here rather
+ * than by a strict arg validator, which is what turns a bad payload into a
+ * friendly message instead of an unhandled server exception.
+ */
 export const updatePlayer = mutation({
   args: {
-    playerId: v.id("players"),
-    name: v.string(),
-    house: houseValidator,
-    position: positionValidator,
-    price: v.number(),
+    id: v.id("players"),
+    name: v.optional(v.string()),
+    price: v.optional(v.number()),
+    // Plain strings (not the enum validators) so a typo produces the friendly
+    // "Invalid house …" error below instead of an ArgumentValidationError.
+    position: v.optional(v.string()),
+    house: v.optional(v.string()),
+    image: v.optional(v.string()),
+    status: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireAdmin(ctx);
-
-    const player = await ctx.db.get(args.playerId);
-    if (!player) throw new Error("Player not found — it may have already been removed.");
-
-    // Explicit input normalization — never trust raw client values.
-    const name = typeof args.name === "string" ? args.name.trim() : "";
-    const house = typeof args.house === "string" ? args.house.trim() : "";
-    const position = typeof args.position === "string" ? args.position.trim() : "";
-    const price = Number(args.price);
-
-    if (name.length < 2) {
-      throw new Error("Invalid name: player name must be at least 2 characters.");
-    }
-    if (!HOUSES.includes(house as (typeof HOUSES)[number])) {
-      throw new Error(`Invalid house "${house}" — must be Fire, Earth, Wind or Water.`);
-    }
-    if (!POSITIONS.includes(position as (typeof POSITIONS)[number])) {
-      throw new Error(`Invalid position "${position}" — must be GK, DEF, MID or FWD.`);
-    }
-    if (!Number.isFinite(price) || price < 0) {
-      throw new Error("Invalid price format or missing field — use a non-negative number.");
-    }
-    // Enforce the Super-Admin price window (defaults $4m–$22m).
-    const { marketRules } = normalizeSettings(await getSettingsRow(ctx));
-    if (price < marketRules.minPlayerPrice || price > marketRules.maxPlayerPrice) {
-      throw new Error(
-        `Price must be between ${formatMoney(marketRules.minPlayerPrice)} and ${formatMoney(marketRules.maxPlayerPrice)}.`,
-      );
-    }
+    await requireSuperAdmin(ctx);
 
     try {
-      await ctx.db.patch(args.playerId, {
-        name,
-        house: house as House,
-        position: position as Position,
-        price: Math.round(price),
-      });
+      // Existence check first — a deleted player is a normal, reportable state.
+      const player = await ctx.db.get(args.id).catch(() => null);
+      if (!player) {
+        throw new Error("Player not found — it may have already been removed.");
+      }
+
+      const patch: {
+        name?: string;
+        house?: House;
+        position?: Position;
+        price?: number;
+        image?: string;
+        statusLabel?: PlayerStatusLabel;
+      } = {};
+      const changes: string[] = [];
+
+      if (args.name !== undefined) {
+        const name = args.name.trim();
+        if (name.length < 2) {
+          throw new Error("Invalid name: player name must be at least 2 characters.");
+        }
+        patch.name = name;
+        if (name !== player.name) changes.push(`name → ${name}`);
+      }
+
+      if (args.house !== undefined) {
+        const house = args.house.trim();
+        if (!HOUSES.includes(house as (typeof HOUSES)[number])) {
+          throw new Error(`Invalid house "${house}" — must be Fire, Earth, Wind or Water.`);
+        }
+        patch.house = house as House;
+        if (house !== player.house) changes.push(`house → ${house}`);
+      }
+
+      if (args.position !== undefined) {
+        const position = args.position.trim();
+        if (!POSITIONS.includes(position as (typeof POSITIONS)[number])) {
+          throw new Error(`Invalid position "${position}" — must be GK, DEF, MID or FWD.`);
+        }
+        patch.position = position as Position;
+        if (position !== player.position) changes.push(`position → ${position}`);
+      }
+
+      if (args.price !== undefined) {
+        // Clamp into the effective market window ($4m–$22m by default).
+        const { marketRules } = normalizeSettings(await getSettingsRow(ctx));
+        const price = clampPrice(
+          args.price,
+          marketRules.minPlayerPrice,
+          marketRules.maxPlayerPrice,
+        );
+        if (price === null) {
+          throw new Error(
+            "Invalid price — use a positive number (e.g. 12m or 8,500,000).",
+          );
+        }
+        patch.price = price;
+        if (price !== player.price) changes.push(`price → ${formatMoney(price)}`);
+      }
+
+      if (args.image !== undefined) {
+        // Only reached when the caller sent the field, so a blank string
+        // means "clear" and patches the key to undefined, removing it.
+        const image = normalizeImage(args.image);
+        patch.image = image;
+        changes.push(image === undefined ? "photo cleared" : "photo updated");
+      }
+
+      if (args.status !== undefined) {
+        // Blank string clears the label; the UI already reads a missing label
+        // as the "Expected to Start" default, so clearing is non-destructive.
+        const status = resolveStatusLabel(args.status);
+        patch.statusLabel = status ?? undefined;
+        changes.push(status ? `status → ${status}` : "status cleared");
+      }
+
+      if (Object.keys(patch).length === 0) {
+        throw new Error("Nothing to update — change at least one field first.");
+      }
+
+      await ctx.db.patch(args.id, patch);
+
+      const updated = await ctx.db.get(args.id);
       try {
         await ctx.runMutation(internal.audit.logAudit, {
           action: "update_player",
           category: "config",
-          target: name,
-          detail: `${house} ${position} · ${formatMoney(price)}`,
+          target: patch.name ?? player.name,
+          detail:
+            changes.length > 0
+              ? changes.join(" · ")
+              : `${player.house} ${player.position} · ${formatMoney(player.price)}`,
         });
       } catch {
         // audit is non-fatal
       }
-    } catch {
+
+      return {
+        ok: true as const,
+        player: updated
+          ? {
+              _id: updated._id,
+              name: updated.name,
+              house: updated.house,
+              position: updated.position,
+              price: updated.price,
+              // Absent means "Expected to Start" everywhere in the UI.
+              statusLabel: updated.statusLabel ?? "Expected to Start",
+              image: updated.image ?? null,
+            }
+          : null,
+        changed: changes,
+      };
+    } catch (err) {
+      // Validation Errors rethrow untouched so the client toast keeps its
+      // specific guidance; anything else becomes a friendly message.
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
       throw new Error(
-        "Could not update player — invalid price format or missing field. Please check the form and try again.",
+        "Could not update the player — please refresh the roster and try again.",
       );
     }
   },

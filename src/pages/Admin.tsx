@@ -368,6 +368,7 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
   const [editHouse, setEditHouse] = useState<House>("Fire");
   const [editPosition, setEditPosition] = useState<Position>("MID");
   const [editPrice, setEditPrice] = useState("");
+  const [updating, setUpdating] = useState(false);
 
   // ── Availability status labels (Super Admin only) ──
   // "Default" clears the stored label, so the player falls back to
@@ -499,23 +500,40 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
 
   const handleUpdate = async () => {
     if (!editing) return;
+    // Parse before calling: parseMoneyInput understands "12m" / "8,500,000"
+    // and returns null for anything unparseable, so we never send NaN.
     const parsed = parseMoneyInput(editPrice);
-    if (!editName.trim() || parsed === null) {
-      toast.error("Enter a valid name and price.");
+    if (!editName.trim()) {
+      toast.error("Enter a valid name.");
       return;
     }
+    if (parsed === null || !Number.isFinite(Number(parsed))) {
+      toast.error("Enter a valid price (e.g. 12m or 8,500,000).");
+      return;
+    }
+    setUpdating(true);
     try {
-      await updatePlayer({
-        playerId: editing,
+      // Partial update — only the fields in the edit form are sent.
+      const result = await updatePlayer({
+        id: editing,
         name: editName.trim(),
         house: editHouse,
         position: editPosition,
-        price: parsed,
+        price: Number(parsed),
       });
-      toast.success("Player updated.");
+      toast.success(
+        result.changed.length > 0
+          ? `Player updated successfully — ${result.changed.join(", ")}.`
+          : "Player updated successfully.",
+      );
       setEditing(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not update player.");
+      // The server returns friendly, human-readable validation messages.
+      toast.error(
+        `Failed to update player: ${err instanceof Error ? err.message : "Invalid input"}`,
+      );
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -718,14 +736,24 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
                               size="sm"
                               variant="outline"
                               onClick={handleUpdate}
-                              disabled={!editName.trim() || parseMoneyInput(editPrice) === null}
+                              disabled={
+                                updating ||
+                                !editName.trim() ||
+                                parseMoneyInput(editPrice) === null
+                              }
                               title={
-                                !editName.trim() || parseMoneyInput(editPrice) === null
-                                  ? "Enter a valid name and price first"
-                                  : "Save changes"
+                                updating
+                                  ? "Saving…"
+                                  : !editName.trim() || parseMoneyInput(editPrice) === null
+                                    ? "Enter a valid name and price first"
+                                    : "Save changes"
                               }
                             >
-                              <Save className="size-3.5" />
+                              {updating ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Save className="size-3.5" />
+                              )}
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
                               ✕
