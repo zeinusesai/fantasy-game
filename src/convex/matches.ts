@@ -13,6 +13,7 @@ import { computePlayerPoints, resolveScoringRules, captainMultiplier } from "./p
 import { getSettingsRow, normalizeSettings } from "./adminConfig";
 import type { Id } from "./_generated/dataModel";
 import { resolveFormation } from "./formations";
+import { checkLineupRules } from "./lineups";
 
 // ── Public queries ───────────────────────────────────────────────────────
 
@@ -154,6 +155,9 @@ export const setExpectedLineups = mutation({
     matchId: v.id("matches"),
     homeStarters: v.array(v.id("players")),
     awayStarters: v.array(v.id("players")),
+    // Bench / substitutes, max 3 per side (enforced by checkLineupRules).
+    homeSubs: v.optional(v.array(v.id("players"))),
+    awaySubs: v.optional(v.array(v.id("players"))),
     homeFormation: v.optional(v.string()),
     awayFormation: v.optional(v.string()),
   },
@@ -170,39 +174,35 @@ export const setExpectedLineups = mutation({
       const match = await ctx.db.get(args.matchId);
       if (!match) throw new Error("Match not found — it may have been removed.");
 
-      // Normalize arrays defensively (a stale client can send junk).
-      const homeStarters = Array.from(
-        new Set(
-          (Array.isArray(args.homeStarters) ? args.homeStarters : []).filter(
-            (id): id is Id<"players"> => typeof id === "string" && id.length > 0,
-          ),
-        ),
-      );
-      const awayStarters = Array.from(
-        new Set(
-          (Array.isArray(args.awayStarters) ? args.awayStarters : []).filter(
-            (id): id is Id<"players"> => typeof id === "string" && id.length > 0,
-          ),
-        ),
-      );
+      // Normalize + enforce the shared rules (max 7 starters, max 3 subs, and
+      // no starter/bench overlap on the same side). One source of truth —
+      // `lineups.savePredictedLineup` uses exactly the same helper.
+      const home = checkLineupRules(match.homeHouse, args.homeStarters, args.homeSubs ?? []);
+      if (!home.ok) throw new Error(home.error);
+      const away = checkLineupRules(match.awayHouse, args.awayStarters, args.awaySubs ?? []);
+      if (!away.ok) throw new Error(away.error);
 
-      if (homeStarters.length > 7 || awayStarters.length > 7) {
-        throw new Error("Each house can have at most 7 expected starters.");
+      const homeStarters = home.starters;
+      const awayStarters = away.starters;
+      const homeSubs = home.subs;
+      const awaySubs = away.subs;
+
+      // No player may appear anywhere on BOTH sides (starter or bench).
+      const homeUsed = [...homeStarters, ...homeSubs].map(String);
+      const awayUsed = [...awayStarters, ...awaySubs].map(String);
+      if (new Set([...homeUsed, ...awayUsed]).size !== homeUsed.length + awayUsed.length) {
+        throw new Error("A player cannot be expected to play for both houses.");
       }
 
-      const all = [...homeStarters, ...awayStarters];
-      if (new Set(all.map(String)).size !== all.length) {
-        throw new Error("A player cannot be expected to start for both houses.");
-      }
-
-      for (let i = 0; i < all.length; i++) {
-        const doc = await ctx.db.get(all[i]).catch(() => null);
+      const allIds = [...homeStarters, ...homeSubs, ...awayStarters, ...awaySubs];
+      for (let i = 0; i < allIds.length; i++) {
+        const doc = await ctx.db.get(allIds[i]).catch(() => null);
         if (!doc || !doc.active) {
           throw new Error(
             "One of those players no longer exists or was removed — refresh the roster.",
           );
         }
-        const expectedHouse = i < homeStarters.length ? match.homeHouse : match.awayHouse;
+        const expectedHouse = i < homeUsed.length ? match.homeHouse : match.awayHouse;
         if (doc.house !== expectedHouse) {
           throw new Error(
             `${doc.name} belongs to ${doc.house}, not ${expectedHouse} — check the expected lineup.`,
@@ -216,15 +216,24 @@ export const setExpectedLineups = mutation({
       // Clearing: empty on both sides removes the field entirely.
       if (homeStarters.length === 0 && awayStarters.length === 0) {
         await ctx.db.patch(args.matchId, { expectedLineups: undefined });
-        return { home: 0, away: 0, cleared: true };
+        return { home: 0, away: 0, homeSubs: 0, awaySubs: 0, cleared: true };
       }
 
       await ctx.db.patch(args.matchId, {
-        expectedLineups: { homeStarters, awayStarters, homeFormation, awayFormation },
+        expectedLineups: {
+          homeStarters,
+          awayStarters,
+          homeSubs,
+          awaySubs,
+          homeFormation,
+          awayFormation,
+        },
       });
       return {
         home: homeStarters.length,
         away: awayStarters.length,
+        homeSubs: homeSubs.length,
+        awaySubs: awaySubs.length,
         homeFormation,
         awayFormation,
         cleared: false,

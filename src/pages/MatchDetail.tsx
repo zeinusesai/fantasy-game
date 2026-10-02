@@ -25,6 +25,8 @@ import { useNavigate, useParams } from "react-router";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
 import { PitchView, type PitchPlayer } from "@/components/PitchView";
 import { StatusBadge } from "@/components/StatusBadge";
+import { PositionChip } from "@/components/houses";
+import { MAX_SUBSTITUTES } from "@/convex/configDefaults";
 import { DEFAULT_FORMATION, inferFormation, resolveFormation } from "@/convex/formations";
 import type { Position } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -42,6 +44,14 @@ const homeLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.homeStarters ?
 const awayLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.awayStarters ?? [];
 const expectedHomeOf = (m: MatchDoc): Id<"players">[] => m.expectedLineups?.homeStarters ?? [];
 const expectedAwayOf = (m: MatchDoc): Id<"players">[] => m.expectedLineups?.awayStarters ?? [];
+/**
+ * Bench / substitutes for the expected XI. `?? []` everywhere: the sub field
+ * is optional on the schema, so a legacy match row has none and must not throw.
+ */
+const expectedHomeSubsOf = (m: MatchDoc): Id<"players">[] =>
+  m.expectedLineups?.homeSubs ?? [];
+const expectedAwaySubsOf = (m: MatchDoc): Id<"players">[] =>
+  m.expectedLineups?.awaySubs ?? [];
 
 /**
  * The shape a lineup should be drawn in: the formation the Super Admin picked,
@@ -353,6 +363,9 @@ function OverviewTab({
               : "Lineups will be announced before kickoff"
           }
           byId={byId}
+          // Bench is a separate prop so it renders BELOW the pitch, never on
+          // it — starters and substitutes can never overlap a formation slot.
+          substitutes={showExpected ? expectedHomeSubsOf(match) : []}
         />
         <LineupPitch
           house={match.awayHouse}
@@ -365,6 +378,7 @@ function OverviewTab({
               : "Lineups will be announced before kickoff"
           }
           byId={byId}
+          substitutes={showExpected ? expectedAwaySubsOf(match) : []}
         />
       </div>
     </div>
@@ -396,6 +410,7 @@ function LineupPitch({
   formation,
   expected = false,
   emptyText = "Lineups will be announced before kickoff",
+  substitutes = [],
 }: {
   house: string;
   starters: Id<"players">[];
@@ -404,8 +419,13 @@ function LineupPitch({
   formation?: string | null;
   expected?: boolean;
   emptyText?: string;
+  /** Bench ids, rendered BELOW the pitch (never on it). */
+  substitutes?: Id<"players">[] | null;
 }) {
   const docs = docsFor(starters, byId);
+  // Bench is resolved separately and defensively: `?? []` on the prop, and
+  // `docsFor` already skips players who no longer exist.
+  const benchDocs = docsFor(substitutes ?? [], byId);
   const byPosition = toPitchPlayers(docs).reduce(
     (acc, p) => {
       (acc[p.position] ??= []).push(p);
@@ -443,6 +463,30 @@ function LineupPitch({
             showStatus
             emptyLabel="—"
           />
+        )}
+        {/* ── Bench / substitutes (max 3) — a separate strip BELOW the pitch,
+            so it can never overlap a formation slot. ── */}
+        {benchDocs.length > 0 && (
+          <div className="mt-3 rounded-lg border border-dashed border-amber-400/30 bg-amber-400/5 p-2.5">
+            <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-200">
+              Bench / substitutes
+              <span className="text-muted-foreground">
+                {benchDocs.length}/{MAX_SUBSTITUTES}
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {benchDocs.map((p) => (
+                <span
+                  key={p._id}
+                  className="flex items-center gap-1.5 rounded-full bg-amber-400/15 py-0.5 pl-1 pr-2 text-[11px] font-semibold text-amber-100 ring-1 ring-amber-400/40"
+                >
+                  <PlayerAvatar player={p} size={18} className="ring-0" />
+                  {p.name}
+                  <PositionChip position={p.position} />
+                </span>
+              ))}
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

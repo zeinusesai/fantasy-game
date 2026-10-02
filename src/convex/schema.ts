@@ -272,6 +272,11 @@ const schema = defineSchema(
         v.object({
           homeStarters: v.array(v.id("players")), // up to 7 player ids
           awayStarters: v.array(v.id("players")),
+          // Bench / substitutes. Convex validators cannot express an array
+          // length cap, so the max-3 rule is enforced in convex/lineups.ts
+          // (MAX_SUBSTITUTES) on every write path.
+          homeSubs: v.optional(v.array(v.id("players"))),
+          awaySubs: v.optional(v.array(v.id("players"))),
           homeFormation: v.optional(v.string()),
           awayFormation: v.optional(v.string()),
         }),

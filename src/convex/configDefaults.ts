@@ -40,6 +40,13 @@ export const FIXED_MANAGER_BUDGET = 70_000_000;
  */
 export const MAX_MESSAGE_LENGTH = 1000;
 
+/**
+ * Hard ceiling on BENCH / substitute players per side of a predicted lineup.
+ * Lives in this PURE module so the client (match editor) and the server
+ * (`convex/lineups.ts`) enforce the identical number from one constant.
+ */
+export const MAX_SUBSTITUTES = 3;
+
 export const DEFAULT_CONFIG = {
   budget: FIXED_MANAGER_BUDGET, // $70m — fixed for all managers
   houseLimit: 3,

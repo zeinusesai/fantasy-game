@@ -6,9 +6,9 @@ import type { House, MatchStatus } from "@/convex/schema";
 import { HOUSES, STAGE_LABELS } from "@/lib/fantasy";
 import { HouseBadge, PositionChip, RatingBadge } from "@/components/houses";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
-import { StatusBadge } from "@/components/StatusBadge";
-import {
-  DEFAULT_FORMATION,
+import { StatusBadge } from "@/components/StatusBadge";import { MAX_SUBSTITUTES } from "@/convex/configDefaults";
+import { Plus } from "lucide-react";
+import { DEFAULT_FORMATION,
   FORMATION_PRESETS,
   formationBlurb,
   formationShape,
@@ -98,6 +98,9 @@ export function MatchControlCenter() {
   const [expAway, setExpAway] = useState<string[]>([]);
   const [expHomeFormation, setExpHomeFormation] = useState<string>(DEFAULT_FORMATION);
   const [expAwayFormation, setExpAwayFormation] = useState<string>(DEFAULT_FORMATION);
+  // Bench / substitutes (max 3 per side).
+  const [expHomeSubs, setExpHomeSubs] = useState<string[]>([]);
+  const [expAwaySubs, setExpAwaySubs] = useState<string[]>([]);
   const [ratings, setRatings] = useState<Record<string, typeof EMPTY_RATING>>({});
   const [potm, setPotm] = useState<string>("");
   const [eventType, setEventType] = useState<"goal" | "yellow_card" | "red_card" | "sub">("goal");
@@ -117,6 +120,9 @@ export function MatchControlCenter() {
     // missing, legacy or corrupted.
     setExpHome((match.expectedLineups?.homeStarters ?? []).map(String));
     setExpAway((match.expectedLineups?.awayStarters ?? []).map(String));
+    // `?? []` — an absent sub field on a legacy row must not throw.
+    setExpHomeSubs((match.expectedLineups?.homeSubs ?? []).map(String));
+    setExpAwaySubs((match.expectedLineups?.awaySubs ?? []).map(String));
     setExpHomeFormation(resolveFormation(match.expectedLineups?.homeFormation ?? DEFAULT_FORMATION));
     setExpAwayFormation(resolveFormation(match.expectedLineups?.awayFormation ?? DEFAULT_FORMATION));
     setPotm(match.potmPlayerId ? String(match.potmPlayerId) : "");
@@ -146,6 +152,37 @@ export function MatchControlCenter() {
     } else {
       toast.error("That team already has 7 starters — remove one first.");
     }
+  };
+
+  /**
+   * Toggle a BENCH player for one side.
+   *
+   * Enforces the max-3 rule on both ends: the list is hard-capped here (so a
+   * 4th click can never even build an over-long payload) and the button is
+   * disabled by the UI. The server re-checks regardless — this is UX, not
+   * security.
+   */
+  const toggleSub = (
+    list: string[],
+    setList: (v: string[]) => void,
+    starters: string[],
+    id: string,
+  ) => {
+    if (list.includes(id)) {
+      setList(list.filter((x) => x !== id));
+      return;
+    }
+    if (starters.includes(id)) {
+      toast.error("That player is already a starter — move them off the XI first.");
+      return;
+    }
+    if (list.length >= MAX_SUBSTITUTES) {
+      toast.error(
+        `Maximum ${MAX_SUBSTITUTES} substitutes — remove one before adding another.`,
+      );
+      return;
+    }
+    setList([...list, id]);
   };
 
   /**
@@ -205,10 +242,17 @@ export function MatchControlCenter() {
         matchId: activeId as Id<"matches">,
         homeStarters: expHome as Id<"players">[],
         awayStarters: expAway as Id<"players">[],
+        homeSubs: expHomeSubs as Id<"players">[],
+        awaySubs: expAwaySubs as Id<"players">[],
         homeFormation: resolveFormation(expHomeFormation),
         awayFormation: resolveFormation(expAwayFormation),
       });
-      toast.success("Expected lineups published to the match preview.");
+      const bench = expHomeSubs.length + expAwaySubs.length;
+      toast.success(
+        bench > 0
+          ? `Predicted lineup saved with substitutes — ${bench} on the bench.`
+          : "Expected lineups published to the match preview.",
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save the expected lineups.");
     } finally {
@@ -224,9 +268,13 @@ export function MatchControlCenter() {
         matchId: activeId as Id<"matches">,
         homeStarters: [],
         awayStarters: [],
+        homeSubs: [],
+        awaySubs: [],
       });
       setExpHome([]);
       setExpAway([]);
+      setExpHomeSubs([]);
+      setExpAwaySubs([]);
       toast.success("Expected lineups cleared.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not clear the expected lineups.");
@@ -535,6 +583,8 @@ export function MatchControlCenter() {
                     roster: homeRoster,
                     list: expHome,
                     setList: setExpHome,
+                    subs: expHomeSubs,
+                    setSubs: setExpHomeSubs,
                     formation: expHomeFormation,
                     setFormation: setExpHomeFormation,
                   },
@@ -543,6 +593,8 @@ export function MatchControlCenter() {
                     roster: awayRoster,
                     list: expAway,
                     setList: setExpAway,
+                    subs: expAwaySubs,
+                    setSubs: setExpAwaySubs,
                     formation: expAwayFormation,
                     setFormation: setExpAwayFormation,
                   },
@@ -609,6 +661,8 @@ export function MatchControlCenter() {
                         {side.roster.map((p) => {
                           const pid = String(p._id);
                           const on = side.list.includes(pid);
+                          const onBench = side.subs.includes(pid);
+                          const isStarter = on;
                           return (
                             <button
                               key={p._id}
@@ -617,11 +671,23 @@ export function MatchControlCenter() {
                               className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2.5 text-xs font-medium ring-1 transition-all ${
                                 on
                                   ? "bg-sky-500/20 text-sky-200 ring-sky-400/50"
-                                  : "bg-secondary text-secondary-foreground ring-border hover:ring-sky-400/40"
+                                  : onBench
+                                    ? "bg-amber-400/15 text-amber-200 ring-amber-400/40"
+                                    : "bg-secondary text-secondary-foreground ring-border hover:ring-sky-400/40"
                               }`}
+                              title={
+                                on
+                                  ? "Starter — click to remove"
+                                  : onBench
+                                    ? "Substitute — click to promote to the XI"
+                                    : "Add to the starting XI"
+                              }
                             >
                               <PlayerAvatar player={p} size={20} className="ring-0" />
                               {p.name}
+                              {onBench && !isStarter && (
+                                <span className="text-[9px] font-bold uppercase">SUB</span>
+                              )}
                               <StatusBadge status={p.statusLabel} dot />
                             </button>
                           );
@@ -631,6 +697,92 @@ export function MatchControlCenter() {
                             No players registered for this house yet.
                           </p>
                         )}
+                      </div>
+
+                      {/* ── Bench / substitutes (max 3) ──
+                          Rendered BELOW the XI and visually separate from it,
+                          so a substitute can never overlap a starter card. */}
+                      <div className="mt-2.5 rounded-lg border border-dashed border-amber-400/30 bg-amber-400/5 p-2">
+                        <p className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-200">
+                          <Users className="size-3" /> Bench / substitutes
+                          <Badge
+                            className={
+                              side.subs.length >= MAX_SUBSTITUTES
+                                ? "border border-amber-400/50 bg-amber-400/20 text-[10px] text-amber-200"
+                                : "border border-amber-400/30 bg-amber-400/10 text-[10px] text-amber-200"
+                            }
+                          >
+                            Subs: {side.subs.length}/{MAX_SUBSTITUTES}
+                          </Badge>
+                        </p>
+                        {side.subs.length > 0 ? (
+                          <div className="mb-1.5 flex flex-wrap gap-1.5">
+                            {side.subs.map((pid) => {
+                              const p = side.roster.find(
+                                (r) => String(r._id) === pid,
+                              );
+                              return (
+                                <span
+                                  key={pid}
+                                  className="flex items-center gap-1 rounded-full bg-amber-400/20 py-0.5 pl-1 pr-2 text-[11px] font-semibold text-amber-100 ring-1 ring-amber-400/50"
+                                >
+                                  {p ? <PlayerAvatar player={p} size={16} className="ring-0" /> : null}
+                                  {p?.name ?? "Unknown player"}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      side.setSubs(side.subs.filter((x) => x !== pid))
+                                    }
+                                    className="ml-0.5 rounded-full p-0.5 text-amber-200/70 transition-colors hover:text-rose-300"
+                                    title="Remove from the bench"
+                                    aria-label={`Remove ${p?.name ?? "player"} from the bench`}
+                                  >
+                                    <X className="size-2.5" />
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-muted-foreground mb-1.5 text-[11px]">
+                            No substitutes named yet.
+                          </p>
+                        )}
+                        {/* Eligible = the house roster minus the starting XI.
+                            `?? []` everywhere so an empty side renders a clean
+                            empty state rather than throwing. */}
+                        {(side.roster ?? [])
+                          .filter(
+                            (p) =>
+                              !side.list.includes(String(p._id)) &&
+                              !side.subs.includes(String(p._id)),
+                          )
+                          .map((p) => {
+                            const pid = String(p._id);
+                            const full = side.subs.length >= MAX_SUBSTITUTES;
+                            return (
+                              <button
+                                key={pid}
+                                type="button"
+                                onClick={() =>
+                                  toggleSub(side.subs, side.setSubs, side.list, pid)
+                                }
+                                disabled={full}
+                                title={
+                                  full
+                                    ? `Maximum ${MAX_SUBSTITUTES} substitutes reached`
+                                    : `Add ${p.name} to the bench`
+                                }
+                                className={`mr-1.5 mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ring-1 transition-all ${
+                                  full
+                                    ? "cursor-not-allowed bg-secondary/50 text-muted-foreground/50 ring-border"
+                                    : "bg-secondary text-secondary-foreground ring-border hover:ring-amber-400/50"
+                                }`}
+                              >
+                                <Plus className="size-2.5" /> {p.name}
+                              </button>
+                            );
+                          })}
                       </div>
                       <p className="text-muted-foreground mt-1.5 text-[10px]">
                         {resolveFormation(side.formation)} · {formationBlurb(side.formation)}
