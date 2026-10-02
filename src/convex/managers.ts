@@ -196,6 +196,31 @@ export const getLeaderboard = query({
     const rows = await getLeaderboardRows(ctx);
     const users = await ctx.db.query("users").collect();
     const byId = new Map(users.map((u) => [u._id, u]));
+
+    // Store cosmetics shown next to a manager's name. Collected once so the
+    // loop stays a single pass; a missing table degrades to an empty set.
+    const borderOwners = new Set<string>();
+    const titleOwners = new Set<string>();
+    try {
+      const ents = await ctx.db.query("storeEntitlements").collect();
+      for (const e of ents) {
+        if (e.enabled !== true) continue; // switched-off perks don't show
+        if (e.itemId === "profile_border") borderOwners.add(String(e.userId));
+        if (e.itemId === "custom_title") titleOwners.add(String(e.userId));
+      }
+    } catch {
+      // no entitlements yet — every manager simply renders without cosmetics
+    }
+    // The Super Admin auto-owns every cosmetic.
+    if (byId.size > 0) {
+      for (const u of users) {
+        if (u.role === "super_admin") {
+          borderOwners.add(String(u._id));
+          titleOwners.add(String(u._id));
+        }
+      }
+    }
+
     const out = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -220,6 +245,12 @@ export const getLeaderboard = query({
         avatar: user?.image ?? null,
         favoritePlayerName,
         customBadge: user?.customBadge ?? null,
+        // Store cosmetics (defensive: blank/garbage titles render as null).
+        customTitle:
+          typeof user?.customTitle === "string" && user.customTitle.trim() !== ""
+            ? user.customTitle.trim().slice(0, 24)
+            : null,
+        hasStoreBorder: borderOwners.has(String(row.userId)),
         role: user?.role ?? null,
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,

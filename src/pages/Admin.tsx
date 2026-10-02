@@ -41,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
+import { MAX_PRICE_AED } from "@/convex/storeItems";
 import type { PlayerStatusLabel } from "@/convex/schema";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges, BADGE_META, ASSIGNABLE_BADGE_KEYS } from "@/components/UserBadge";
@@ -57,6 +58,33 @@ type PhotoRequest = Doc<"photoRequests"> & {
   /** The player's live photo (null when already cleared / player deleted). */
   currentPhoto: string | null;
 };
+type Purchase = {
+  _id: Id<"purchases">;
+  username: string | null;
+  avatar: string | null;
+  itemId: string;
+  itemName: string;
+  priceAED: number;
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+  decidedBy: string | null;
+};
+
+/** "12 Aug, 14:03" — locale-formatted, with a safe fallback for junk input. */
+function formatWhen(ts: unknown): string {
+  const n = typeof ts === "number" ? ts : Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "unknown time";
+  try {
+    return new Date(n).toLocaleString(undefined, {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "unknown time";
+  }
+}
 
 // ── Shared safe-avatar + player-photo helpers ───────────────────────────
 
@@ -129,6 +157,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Crown,
+  HandCoins,
   ImagePlus,
   Inbox,
   KeyRound,
@@ -182,6 +211,44 @@ export default function Admin() {
   const pendingPhotoCount = photoRequests.filter(
     (r) => r.status === "pending",
   ).length;
+
+  // ── Store micro-transactions (cash, hard 10 AED ceiling) ──
+  const purchasesResult = useQuery(api.transactions.listPurchases);
+  const approvePurchase = useMutation(api.transactions.approvePurchase);
+  const rejectPurchase = useMutation(api.transactions.rejectPurchase);
+  const purchases = purchasesResult ?? [];
+  const purchasesLoading = purchasesResult === undefined;
+  const pendingPurchaseCount = purchases.filter(
+    (r) => r.status === "pending",
+  ).length;
+
+  const handleApprovePurchase = async (purchaseId: Id<"purchases">) => {
+    try {
+      const result = await approvePurchase({ purchaseId });
+      toast.success(
+        result.granted
+          ? `Transaction approved! ${result.itemName} granted.`
+          : `Transaction approved — ${result.itemName} is no longer available to grant.`,
+      );
+    } catch (err) {
+      // The server's idempotency guard arrives as a clean message here, so a
+      // double click reports honestly instead of silently failing.
+      toast.error(
+        err instanceof Error ? err.message : "Could not approve the transaction.",
+      );
+    }
+  };
+
+  const handleRejectPurchase = async (purchaseId: Id<"purchases">) => {
+    try {
+      const result = await rejectPurchase({ purchaseId });
+      toast.success(`${result.itemName} rejected — nothing was granted.`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not reject the transaction.",
+      );
+    }
+  };
 
   const handleReviewPhoto = async (
     requestId: Id<"photoRequests">,
@@ -279,9 +346,9 @@ export default function Admin() {
             <TabsTrigger value="players">Players</TabsTrigger>
             <TabsTrigger value="requests" className="gap-1.5">
               <Inbox className="size-3.5" /> Requests
-              {pendingCount + pendingPhotoCount > 0 && (
+              {pendingCount + pendingPhotoCount + pendingPurchaseCount > 0 && (
                 <Badge className="bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5">
-                  {pendingCount + pendingPhotoCount}
+                  {pendingCount + pendingPhotoCount + pendingPurchaseCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -333,6 +400,10 @@ export default function Admin() {
               photoRequestsLoading={photoRequestsLoading}
               onReviewPhoto={handleReviewPhoto}
               isSuper={isSuper}
+              purchases={purchases}
+              purchasesLoading={purchasesLoading}
+              onApprovePurchase={handleApprovePurchase}
+              onRejectPurchase={handleRejectPurchase}
             />
           </TabsContent>
           {isSuper && (
@@ -1893,6 +1964,10 @@ function RequestsTab({
   photoRequestsLoading,
   onReviewPhoto,
   isSuper,
+  purchases,
+  purchasesLoading,
+  onApprovePurchase,
+  onRejectPurchase,
 }: {
   requests: PriceRequest[];
   loading: boolean;
@@ -1912,6 +1987,10 @@ function RequestsTab({
     decision: "approve" | "deny",
   ) => void;
   isSuper: boolean;
+  purchases: Purchase[];
+  purchasesLoading: boolean;
+  onApprovePurchase: (purchaseId: Id<"purchases">) => void;
+  onRejectPurchase: (purchaseId: Id<"purchases">) => void;
 }) {
   const parsedAdjust = parseMoneyInput(adjustPrice);
   const adjustValid = parsedAdjust !== null && parsedAdjust >= 0;
@@ -1920,9 +1999,157 @@ function RequestsTab({
   const reviewed = requests.filter((r) => r.status !== "pending");
   const photoPending = photoRequests.filter((r) => r.status === "pending");
   const photoReviewed = photoRequests.filter((r) => r.status !== "pending");
+  const purchasePending = purchases.filter((r) => r.status === "pending");
+  const purchaseReviewed = purchases.filter((r) => r.status !== "pending");
 
   return (
     <div className="space-y-4">
+      {/* ── Pending micro-transactions (store, manual cash, max 10 AED) ── */}
+      <Card className="border-border/80">
+        <CardHeader>
+          <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+            <HandCoins className="text-primary size-4" /> Pending micro-transactions
+            {purchasePending.length > 0 && (
+              <Badge className="border border-amber-400/40 bg-amber-400/20 px-1.5 text-[10px] text-amber-300">
+                {purchasePending.length}
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            Managers pay you cash in person, then file a request. Approving flips
+            the transaction and grants the perk automatically. Hard ceiling:{" "}
+            <span className="text-foreground font-semibold">
+              {MAX_PRICE_AED} AED
+            </span>{" "}
+            per item.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {purchasesLoading ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading transactions…
+            </p>
+          ) : purchasePending.length === 0 ? (
+            <p className="text-muted-foreground py-8 text-center text-sm">
+              No pending transactions right now.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {purchasePending.map((p) => (
+                <div
+                  key={p._id}
+                  className="rounded-xl border border-border/70 bg-secondary/40 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <AdminAvatar username={p.username} image={p.avatar} />
+                      <div className="min-w-0">
+                        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                          <span>@{p.username || "unknown"}</span>
+                          <span className="text-muted-foreground font-normal">
+                            wants
+                          </span>
+                          <span className="text-primary">{p.itemName}</span>
+                        </p>
+                        <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-score font-bold text-foreground">
+                            {p.priceAED} AED
+                          </span>
+                          <span>· requested {formatWhen(p.createdAt)}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className="border border-amber-400/40 bg-amber-400/15 text-[10px] text-amber-300 uppercase"
+                    >
+                      pending
+                    </Badge>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={!isSuper}
+                      title={
+                        isSuper
+                          ? "Confirm cash received and grant the item"
+                          : "Only the Super Admin can approve purchases"
+                      }
+                      onClick={() => onApprovePurchase(p._id)}
+                    >
+                      <CheckCircle2 className="mr-1.5 size-3.5" /> Accept &amp; grant
+                      item
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      disabled={!isSuper}
+                      title={
+                        isSuper
+                          ? "Reject — no items or stats change"
+                          : "Only the Super Admin can reject purchases"
+                      }
+                      onClick={() => onRejectPurchase(p._id)}
+                    >
+                      <XCircle className="mr-1.5 size-3.5" /> Reject request
+                    </Button>
+                  </div>
+                  {!isSuper && (
+                    <p className="text-muted-foreground mt-2 text-[11px]">
+                      Waiting on the Super Admin (Zein) to confirm the cash.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {purchaseReviewed.length > 0 && (
+        <Card className="border-border/80">
+          <CardHeader>
+            <CardTitle className="font-display text-sm font-bold uppercase tracking-widest">
+              Transactions settled
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {purchaseReviewed.slice(0, 25).map((p) => (
+              <div
+                key={p._id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
+              >
+                <p className="text-sm">
+                  <span className="font-semibold">{p.itemName}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    for @{p.username || "unknown"}
+                  </span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="font-score text-xs font-bold">{p.priceAED} AED</span>
+                  <Badge
+                    className={
+                      p.status === "approved"
+                        ? "border border-emerald-400/40 bg-emerald-400/15 text-[10px] text-emerald-300 uppercase"
+                        : "text-[10px] uppercase"
+                    }
+                  >
+                    {p.status}
+                  </Badge>
+                  {p.decidedBy ? (
+                    <span className="text-muted-foreground text-[11px]">
+                      by {p.decidedBy}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Photo removal requests (manager-reported, Super Admin decides) ── */}
       <Card className="border-border/80">
         <CardHeader>

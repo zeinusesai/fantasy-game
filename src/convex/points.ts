@@ -42,6 +42,7 @@ export function resolveScoringRules(partial: unknown): ScoringRules {
     goalFwd: clampInt(raw.goalFwd, 0, 100, DEFAULT_SCORING_RULES.goalFwd),
     assist: clampInt(raw.assist, 0, 100, DEFAULT_SCORING_RULES.assist),
     cleanSheetGkDef: clampInt(raw.cleanSheetGkDef, 0, 100, DEFAULT_SCORING_RULES.cleanSheetGkDef),
+    cleanSheetMid: clampInt(raw.cleanSheetMid, 0, 100, DEFAULT_SCORING_RULES.cleanSheetMid),
     // A savesPerPoint of 0 would be a divide-by-zero at scoring time.
     savesPerPoint: clampInt(raw.savesPerPoint, 1, 50, DEFAULT_SCORING_RULES.savesPerPoint),
     yellowCard: clampInt(raw.yellowCard, -100, 0, DEFAULT_SCORING_RULES.yellowCard),
@@ -96,10 +97,20 @@ export function computePlayerPoints(
   let pts = 0;
   pts += stat(stats?.goals) * goalPointsFor(R, position);
   pts += stat(stats?.assists) * R.assist;
-  if (stats?.cleanSheet === true && (position === "GK" || position === "DEF")) {
-    pts += R.cleanSheetGkDef;
+  // Clean sheets: GK/DEF share one bonus, midfielders get a smaller one.
+  // Forwards never score a clean-sheet bonus.
+  if (stats?.cleanSheet === true) {
+    if (position === "GK" || position === "DEF") {
+      pts += R.cleanSheetGkDef;
+    } else if (position === "MID") {
+      pts += R.cleanSheetMid;
+    }
   }
-  pts += Math.floor(Math.max(stat(stats?.saves), 0) / R.savesPerPoint);
+  // Saves only count for the goalkeeper — a defender with a "save" stat is a
+  // data-entry artefact and must never inflate the score.
+  if (position === "GK") {
+    pts += Math.floor(Math.max(stat(stats?.saves), 0) / R.savesPerPoint);
+  }
   pts += stat(stats?.yellowCards) * R.yellowCard;
   pts += stat(stats?.redCards) * R.redCard;
   pts += stat(stats?.ownGoals) * R.ownGoal;

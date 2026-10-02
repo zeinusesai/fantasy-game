@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
 import { requireSuperAdmin, getPlatformConfig } from "./lib";
 import { CONFIG_KEYS, FIXED_MANAGER_BUDGET } from "./configDefaults";
+import { getSettingsRow, normalizeSettings } from "./adminConfig";
 
 export const getConfig = query({
   args: {},
@@ -9,11 +10,16 @@ export const getConfig = query({
     const base = await getPlatformConfig(ctx);
     const rows = await ctx.db.query("config").collect();
     const msgRow = rows.find((r) => r.key === CONFIG_KEYS.ADMIN_MESSAGE);
+    // Live scoring matrix, so the dashboard's "Scoring Rules" card updates the
+    // instant the Super Admin retunes it (useQuery is reactive). `normalize`
+    // guarantees a complete, in-range object — never partial, never NaN.
+    const scoringRules = normalizeSettings(await getSettingsRow(ctx)).scoringRules;
     return {
       ...base,
       // Optional global announcement — empty string when none exists, so the
       // dashboard banner renders nothing on a fresh/empty database.
       adminMessage: typeof msgRow?.value === "string" ? msgRow.value : "",
+      scoringRules,
     };
   },
 });

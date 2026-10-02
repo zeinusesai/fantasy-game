@@ -215,18 +215,28 @@ export default function Leaderboard() {
                           </span>
                         </TableCell>
                         <TableCell>
-                          <Avatar className="size-8">
-                            <AvatarImage
-                              src={avatar ?? undefined}
-                              alt={row.username}
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.visibility = "hidden";
-                              }}
-                            />
-                            <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
-                              {row.username.slice(0, 2).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
+                          {/* Store cosmetic: "Custom Profile Border" — an
+                              animated glowing fire frame, only when enabled. */}
+                          <span
+                            className={cn(
+                              "inline-flex rounded-full",
+                              row.hasStoreBorder &&
+                                "ring-2 ring-orange-400/70 shadow-[0_0_12px_rgba(251,146,60,0.45)]",
+                            )}
+                          >
+                            <Avatar className="size-8">
+                              <AvatarImage
+                                src={avatar ?? undefined}
+                                alt={row.username}
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).style.visibility = "hidden";
+                                }}
+                              />
+                              <AvatarFallback className="bg-primary/20 text-primary text-xs font-bold">
+                                {row.username.slice(0, 2).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                          </span>
                         </TableCell>
                         <TableCell>
                           {/* Clickable team name → Rival Squad Inspector drawer */}
@@ -237,6 +247,15 @@ export default function Leaderboard() {
                           >
                             <span className="flex items-center gap-1.5">
                               {row.teamName}
+                              {/* Store cosmetic: custom manager title. */}
+                              {row.customTitle ? (
+                                <span
+                                  title={row.customTitle}
+                                  className="shrink-0 truncate rounded-full border border-violet-400/50 bg-violet-400/15 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-violet-200"
+                                >
+                                  {row.customTitle}
+                                </span>
+                              ) : null}
                               {/* Role checkmark + custom badge — fail-safe. */}
                               <UserBadges
                                 sizeClass="size-3.5"

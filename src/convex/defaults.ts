@@ -117,6 +117,8 @@ export interface ScoringRules {
   goalFwd: number;
   assist: number;
   cleanSheetGkDef: number;
+  /** Clean-sheet bonus for midfielders (GK/DEF use `cleanSheetGkDef`). */
+  cleanSheetMid: number;
   savesPerPoint: number;
   yellowCard: number;
   redCard: number;
@@ -130,13 +132,15 @@ export interface ScoringRules {
 }
 
 export const DEFAULT_SCORING_RULES: ScoringRules = {
-  goalGk: 6,
-  goalDef: 6,
-  goalMid: 5,
+  goalGk: 10,
+  goalDef: 8,
+  goalMid: 6,
   goalFwd: 5,
   assist: 3,
   cleanSheetGkDef: 4,
-  savesPerPoint: 2,
+  cleanSheetMid: 1,
+  // 1 save point per 3 saves made.
+  savesPerPoint: 3,
   yellowCard: -1,
   redCard: -3,
   ownGoal: -2,

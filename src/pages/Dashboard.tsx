@@ -11,6 +11,7 @@ import {
   StatsRacesCard,
 } from "@/components/DashboardWidgets";
 import { HouseCrest, PositionChip } from "@/components/houses";
+import { ScoringRulesCard } from "@/components/ScoringRulesCard";
 import { Year12Celebration } from "@/components/Year12Celebration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/card";
 import { formatMoney, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import {
   ArrowRight,
@@ -46,6 +48,12 @@ export default function Dashboard() {
   // `undefined` = query still resolving; `null` = resolved, no squad yet.
   const mySquad = useQuery(api.squads.getMySquad);
   const myStats = useQuery(api.managers.getMyStats);
+  // Store cosmetic: "Golden Jersey / Premium Pitch" unlocks a gold pitch.
+  const store = useQuery(api.transactions.getStore);
+  const goldTheme =
+    (store?.items ?? []).some(
+      (i) => i.id === "golden_theme" && i.owned && i.unlocked,
+    ) === true;
   const matches = useQuery(api.matches.listMatches);
   const config = useQuery(api.config.getConfig);
 
@@ -207,14 +215,30 @@ export default function Dashboard() {
               </Button>
             </CardHeader>
             <CardContent>
-              <div className="mx-auto max-w-md">
+              <div
+                className={cn(
+                  "mx-auto max-w-md transition-all",
+                  goldTheme &&
+                    "rounded-2xl ring-2 ring-amber-300/70 shadow-[0_0_28px_rgba(251,191,36,0.35)]",
+                )}
+              >
                 <PitchView
                   byPosition={byPosition}
                   emptyLabel="Pick"
                   formation={mySquad?.formation ?? "2-3-1"}
                   showStatus
                   showFormationLabel
+                  className={
+                    goldTheme
+                      ? "from-amber-500/25 via-yellow-500/15 to-amber-600/20 border-amber-300/40"
+                      : undefined
+                  }
                 />
+                {goldTheme && (
+                  <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-widest text-amber-300">
+                    ✨ Golden pitch theme active
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -290,6 +314,10 @@ export default function Dashboard() {
             </Card>
           </div>
         </div>
+
+        {/* Live scoring rules — synced to systemConfig, updates instantly when
+            the Super Admin retunes the matrix. */}
+        <ScoringRulesCard />
 
         {/* Post-tournament state: "See you in Year 12!" podium + forfeit.
             Renders nothing while the tournament is live. */}

@@ -24,6 +24,7 @@ const MatchDetail = lazy(() => import("./pages/MatchDetail.tsx"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard.tsx"));
 const Profile = lazy(() => import("./pages/Profile.tsx"));
 const Admin = lazy(() => import("./pages/Admin.tsx"));
+const Store = lazy(() => import("./pages/Store.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -199,6 +200,14 @@ createRoot(document.getElementById("root")!).render(
                 element={
                   <RequireAuth>
                     <Admin />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/store"
+                element={
+                  <RequireAuth>
+                    <Store />
                   </RequireAuth>
                 }
               />

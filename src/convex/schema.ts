@@ -71,6 +71,13 @@ export const requestStatusValidator = v.union(
 );
 export type RequestStatus = Infer<typeof requestStatusValidator>;
 
+// status values for the manual-cash store micro-transactions.
+export const PURCHASE_STATUSES = ["pending", "approved", "rejected"] as const;
+export const purchaseStatusValidator = v.union(
+  ...PURCHASE_STATUSES.map((s) => v.literal(s)),
+);
+export type PurchaseStatus = Infer<typeof purchaseStatusValidator>;
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -97,6 +104,13 @@ const schema = defineSchema(
       budget: v.optional(v.number()), // deprecated: legacy per-user budget
       customBudget: v.optional(v.number()), // deprecated: legacy admin override
       customBadge: v.optional(v.string()), // custom badge: star | gold_checkmark | fire | crown | shield | diamond | none
+      // Custom manager title shown on the leaderboard. Gated behind the
+      // "custom_title" store entitlement; a value here without the
+      // entitlement is simply ignored by the UI.
+      customTitle: v.optional(v.string()),
+      // Extra single-use "Double Down" chips bought in the store (on top of
+      // the free tournament chip). Always clamped to >= 0 server-side.
+      extraChips: v.optional(v.number()),
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
@@ -140,6 +154,9 @@ const schema = defineSchema(
       // One-time "Double Down" chip: armed for gw1 or gw2, consumed at settle.
       activeChip: v.optional(v.string()),
       chipUsed: v.optional(v.boolean()),
+      // How many store-bought extra chips this squad has already burned. The
+      // free tournament chip is tracked separately via `chipUsed`.
+      extraChipsUsed: v.optional(v.number()),
     }).index("by_user", ["userId"]),
 
     // ===== Gameweek management (deadlines, locks, settle state) =====
@@ -334,6 +351,43 @@ const schema = defineSchema(
       .index("by_status", ["status"])
       .index("by_player", ["playerId"])
       .index("by_user", ["userId"]),
+
+    // ===== Store micro-transactions (manual cash, hard 10 AED ceiling) =====
+// Every row is one manager -> one catalogue item -> one Super-Admin decision.
+// `priceAED` is denormalized from the catalogue at request time so the admin
+// queue still shows what was agreed even if the catalogue price changes later.
+    purchases: defineTable({
+      userId: v.id("users"),
+      username: v.optional(v.string()),
+      itemId: v.string(), // StoreItemId from storeItems.ts
+      itemName: v.string(), // denormalized for the queue + activity feed
+      priceAED: v.number(), // 1..10 AED — server rejects anything above 10
+      status: purchaseStatusValidator, // "pending" | "approved" | "rejected"
+      createdAt: v.number(), // epoch ms
+      decidedBy: v.optional(v.string()),
+      decidedAt: v.optional(v.number()),
+      note: v.optional(v.string()), // optional admin note / rejection reason
+    })
+      .index("by_status", ["status"])
+      .index("by_user", ["userId"])
+      .index("by_user_item", ["userId", "itemId"]),
+
+    // ===== Granted store perks, one row per user + item =====
+// The single source of truth for "does this manager own this perk, and is it
+    // switched on?". The Super Admin auto-owns every item via
+    // `via: "super_admin"`; purchased items use `via: "purchase"`.
+    storeEntitlements: defineTable({
+      userId: v.id("users"),
+      itemId: v.string(), // StoreItemId from storeItems.ts
+      grantedAt: v.number(), // epoch ms
+      grantedBy: v.optional(v.string()), // who granted it (admin username)
+      via: v.union(v.literal("purchase"), v.literal("super_admin")),
+      // Cosmetic toggles. Non-toggleable items (chips, budget) are stored as
+      // `true` and never flipped.
+      enabled: v.optional(v.boolean()),
+    })
+      .index("by_user", ["userId"])
+      .index("by_user_item", ["userId", "itemId"]),
 
     // ===== System-level flags + Super Admin customization (singleton row) =====
     // One row holds every global setting Zein can edit. Every field is

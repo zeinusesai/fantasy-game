@@ -324,6 +324,12 @@ export function normalizeSettings(row: {
       100,
       DEFAULT_SCORING_RULES.cleanSheetGkDef,
     ),
+    cleanSheetMid: clampInt(
+      rawScoring?.cleanSheetMid,
+      0,
+      100,
+      DEFAULT_SCORING_RULES.cleanSheetMid,
+    ),
     savesPerPoint: clampInt(
       rawScoring?.savesPerPoint,
       1,
@@ -464,7 +470,7 @@ export function resolveManagerBudget(
 }
 
 /** Upsert the singleton settings row with a partial patch. */
-async function patchSettings(
+export async function patchSettings(
   ctx: MutationCtx,
   patch: Record<string, unknown>,
 ): Promise<void> {
@@ -996,6 +1002,7 @@ export const setScoringRules = mutation({
         goalFwd: clampInt(raw.goalFwd, 0, 100, current.goalFwd),
         assist: clampInt(raw.assist, 0, 100, current.assist),
         cleanSheetGkDef: clampInt(raw.cleanSheetGkDef, 0, 100, current.cleanSheetGkDef),
+        cleanSheetMid: clampInt(raw.cleanSheetMid, 0, 100, current.cleanSheetMid),
         // Division guard: a 0 here would be a divide-by-zero crash in scoring.
         savesPerPoint: clampInt(raw.savesPerPoint, 1, 50, current.savesPerPoint),
         yellowCard: clampInt(raw.yellowCard, -100, 0, current.yellowCard),

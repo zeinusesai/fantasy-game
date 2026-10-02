@@ -639,20 +639,46 @@ async function saveSquadInner(
 export const getMyChip = query({
   args: {},
   handler: async (ctx) => {
+    const empty = {
+      chip: null,
+      used: false,
+      available: false,
+      extraChips: 0,
+      extraChipsLeft: 0,
+    };
     try {
       const userId = await getAuthUserId(ctx);
-      if (userId === null) return { chip: null, used: false, available: false };
+      if (userId === null) return empty;
       const squad = await getSquadForUser(ctx, userId);
-      if (!squad) return { chip: null, used: false, available: false };
+      if (!squad) return empty;
       const armed = typeof squad.activeChip === "string" ? squad.activeChip : null;
       const used = squad.chipUsed === true;
+
+      // Store-bought extra chips (see transactions.approvePurchase). Defensive
+      // on every field: a missing squad/user row just means "no extras".
+      const user = await ctx.db.get(userId);
+      const ownedExtra =
+        typeof user?.extraChips === "number" && Number.isFinite(user.extraChips)
+          ? Math.max(0, Math.floor(user.extraChips))
+          : 0;
+      const burnedExtra =
+        typeof squad.extraChipsUsed === "number" &&
+        Number.isFinite(squad.extraChipsUsed)
+          ? Math.max(0, Math.floor(squad.extraChipsUsed))
+          : 0;
+      const extraChipsLeft = Math.max(0, ownedExtra - burnedExtra);
+      // Free tournament chip + any unspent extra chips = how many are left.
+      const chipsLeft = (used ? 0 : 1) + extraChipsLeft;
+
       return {
         chip: armed,
         used,
-        available: armed === null && !used,
+        available: armed === null && chipsLeft > 0,
+        extraChips: ownedExtra,
+        extraChipsLeft,
       };
     } catch {
-      return { chip: null, used: false, available: false };
+      return empty;
     }
   },
 });

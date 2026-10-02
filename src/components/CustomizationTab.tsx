@@ -83,6 +83,7 @@ const SCORING_FIELDS: readonly ScoringField[] = [
   { key: "goalFwd", label: "Goal — FWD", min: 0, max: 100 },
   { key: "assist", label: "Assist", min: 0, max: 100 },
   { key: "cleanSheetGkDef", label: "Clean sheet (GK/DEF)", min: 0, max: 100 },
+  { key: "cleanSheetMid", label: "Clean sheet (MID)", min: 0, max: 100 },
   { key: "savesPerPoint", label: "Saves per point (÷)", min: 1, max: 50 },
   { key: "yellowCard", label: "Yellow card", min: -100, max: 0 },
   { key: "redCard", label: "Red card", min: -100, max: 0 },
