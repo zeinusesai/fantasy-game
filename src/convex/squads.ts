@@ -6,15 +6,72 @@ import { formatMoney, safeBudget, toSafeAmount, FIXED_MANAGER_BUDGET, CHIP_GW1, 
 import { transferLockReason } from "./gameweekStructure";
 import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
 import { stageValidator } from "./schema";
+import {
+  FORMATION_PRESETS,
+  LEGACY_SHAPE,
+  formationMatches,
+  inferFormation,
+  isFormationId,
+  resolveFormation,
+} from "./formations";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
-const REQUIRED_FORMATION: Record<string, number> = {
-  GK: 1,
-  DEF: 2,
-  MID: 2,
-  FWD: 2,
-};
+/** Human list of the legal 7-a-side shapes, e.g. "2-3-1, 3-2-1, …". */
+const FORMATION_CHOICES = FORMATION_PRESETS.map((p) => p.id).join(", ");
+
+/**
+ * Validate a 7-player selection against the manager's chosen formation and
+ * return the formation id to store.
+ *
+ * Defensive by design:
+ *  - An explicit, recognised choice is honoured, and a mismatch is reported
+ *    with the shape the picks actually form.
+ *  - A MISSING / unknown / legacy formation string (e.g. a stale cached
+ *    client that predates formations) is never rejected — the shape is
+ *    inferred from the picks instead, with the original 1-2-2-2 rule kept as
+ *    a last-resort fallback so pre-formations squads stay saveable.
+ */
+function resolveSquadFormation(
+  counts: Record<"GK" | "DEF" | "MID" | "FWD", number>,
+  requested?: string | null,
+): string {
+  const isLegacyShape =
+    counts.GK === LEGACY_SHAPE.GK &&
+    counts.DEF === LEGACY_SHAPE.DEF &&
+    counts.MID === LEGACY_SHAPE.MID &&
+    counts.FWD === LEGACY_SHAPE.FWD;
+  const illegal = () => {
+    const picked = (Object.keys(counts) as Array<keyof typeof counts>)
+      .filter((k) => counts[k] > 0)
+      .map((k) => `${counts[k]} × ${k}`)
+      .join(" · ");
+    return new Error(
+      `Illegal formation (${picked || "no players"}). Pick a valid 7-a-side shape: ${FORMATION_CHOICES}.`,
+    );
+  };
+
+  // No usable explicit choice → accept whatever legal shape the picks form.
+  if (!isFormationId(typeof requested === "string" ? requested.trim() : "")) {
+    const inferredLoose = inferFormation(counts);
+    if (inferredLoose) return inferredLoose;
+    if (isLegacyShape) return "2-2-2";
+    throw illegal();
+  }
+
+  const chosen = resolveFormation(requested);
+  if (formationMatches(counts, chosen)) return chosen;
+
+  // An explicit choice that the picks do not satisfy is a real mistake.
+  const inferred = inferFormation(counts);
+  if (inferred) {
+    throw new Error(
+      `Your picks form a ${inferred}, not a ${chosen}. Switch the formation or adjust your 7.`,
+    );
+  }
+  if (isLegacyShape) return "2-2-2";
+  throw illegal();
+}
 
 export type SquadPlayer = Doc<"players">;
 
@@ -99,6 +156,9 @@ export const getMySquad = query({
         Boolean,
       ) as SquadPlayer[];
       const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
+      // Never trust a stored formation string — resolveFormation collapses
+      // unknown values to the 2-3-1 default so pitch layout can't break.
+      const formation = resolveFormation(squad.formation);
 
       // On-load sanitization: a squad costing more than the manager's
       // effective budget ($70m unless the Super Admin lowered it) is illegal.
@@ -113,6 +173,7 @@ export const getMySquad = query({
           players: [] as SquadPlayer[],
           captainId: null,
           budget,
+          formation,
           overBudgetReset: true,
         };
       }
@@ -122,6 +183,7 @@ export const getMySquad = query({
         players,
         captainId: captain ? squad.captainId : null,
         budget,
+        formation,
         overBudgetReset: false,
       };
     } catch {
@@ -230,6 +292,7 @@ export const getSquadByUserId = query({
         (p): p is NonNullable<typeof p> => p !== null,
       );
       const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
+      const formation = resolveFormation(squad.formation);
 
       // Points breakdown via the shared leaderboard aggregation (safe at 0 matches).
       const rows = await getLeaderboardRows(ctx);
@@ -257,6 +320,7 @@ export const getSquadByUserId = query({
           totalSpent: 0,
           effectiveBudget,
           remainingBudget: effectiveBudget,
+          formation,
           totalPoints: mine?.total ?? 0,
           lastMatchPoints: mine?.lastMatch ?? 0,
           rank,
@@ -278,6 +342,7 @@ export const getSquadByUserId = query({
         captainName: captain?.name ?? null,
         totalSpent: toSafeAmount(squad.totalSpent),
         effectiveBudget,
+        formation,
         remainingBudget: Math.max(effectiveBudget - toSafeAmount(squad.totalSpent), 0),
         totalPoints: mine?.total ?? 0,
         lastMatchPoints: mine?.lastMatch ?? 0,
@@ -356,6 +421,8 @@ export const saveSquad = mutation({
   args: {
     playerIds: v.array(v.id("players")),
     captainId: v.id("players"),
+    // Chosen 7-a-side shape, e.g. "2-3-1". Omitted → inferred from the picks.
+    formation: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Outer catch-all: ANY unexpected failure (db hiccup, feed write, stale
@@ -374,7 +441,11 @@ export const saveSquad = mutation({
 /** Body of saveSquad, split out so the wrapper can add the friendly catch. */
 async function saveSquadInner(
   ctx: MutationCtx,
-  args: { playerIds: Array<Id<"players">>; captainId: Id<"players"> },
+  args: {
+    playerIds: Array<Id<"players">>;
+    captainId: Id<"players">;
+    formation?: string;
+  },
 ): Promise<Id<"squads">> {
   const user = await requireUser(ctx);
   const { houseLimit } = await getPlatformConfig(ctx);
@@ -411,16 +482,16 @@ async function saveSquadInner(
     );
   }
 
-    // Formation: 1 GK / 2 DEF / 2 MID / 2 FWD
-    const counts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+    // Formation: 1 GK and 6 outfield players matching the manager's chosen
+    // 7-a-side shape (2-3-1 default; 3-2-1 / 2-2-2 / 1-3-2 / 3-1-2 also valid).
+    const counts: Record<"GK" | "DEF" | "MID" | "FWD", number> = {
+      GK: 0,
+      DEF: 0,
+      MID: 0,
+      FWD: 0,
+    };
     for (const p of players) if (p) counts[p.position] += 1;
-    for (const [pos, need] of Object.entries(REQUIRED_FORMATION)) {
-      if (counts[pos] !== need) {
-        throw new Error(
-          `Illegal formation: you need exactly ${need} × ${pos} (you picked ${counts[pos]}).`,
-        );
-      }
-    }
+    const formation = resolveSquadFormation(counts, args.formation);
 
     // House limit
     const houseCounts = new Map<string, number>();
@@ -515,7 +586,7 @@ async function saveSquadInner(
         const reason = transferLockReason(byStage);
         if (reason) throw new Error(reason);
       }
-      await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent });
+      await ctx.db.patch(existing._id, { playerIds, captainId, totalSpent, formation });
       // Activity feed: transfer made (defensive, non-fatal).
       if (change) {
         try {
@@ -548,6 +619,7 @@ async function saveSquadInner(
       playerIds,
       captainId,
       totalSpent,
+      formation,
     });
     try {
       await ctx.runMutation(internal.activity.logActivity, {

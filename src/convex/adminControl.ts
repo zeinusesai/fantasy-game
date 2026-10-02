@@ -9,6 +9,13 @@ import { requireSuperAdmin } from "./lib";
 import { getSquadForUser } from "./lib";
 import { internal } from "./_generated/api";
 import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
+import {
+  formationMatches,
+  formationShape,
+  inferFormation,
+  isFormationId,
+  resolveFormation,
+} from "./formations";
 import { formatMoney, toSafeAmount } from "./configDefaults";
 import { CHIP_GW1, CHIP_GW2 } from "./configDefaults";
 import { houseValidator, HOUSES, positionValidator, type House, type Position } from "./schema";
@@ -392,8 +399,10 @@ export const forceSaveSquad = mutation({
     userId: v.id("users"),
     playerIds: v.array(v.id("players")),
     captainId: v.optional(v.id("players")),
+    // Chosen 7-a-side shape, e.g. "2-3-1". Omitted → inferred from the picks.
+    formation: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, playerIds, captainId }) => {
+  handler: async (ctx, { userId, playerIds, captainId, formation }) => {
     await requireSuper(ctx);
     try {
       const target = await ctx.db.get(userId);
@@ -407,12 +416,40 @@ export const forceSaveSquad = mutation({
       const docs = await Promise.all(playerIds.map((id) => ctx.db.get(id)));
       if (docs.some((p) => !p)) throw new Error("One of those players no longer exists.");
 
-      const counts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
+      // Formation-aware: honour the admin's chosen shape, otherwise infer it
+      // from the picked positions. A missing / unknown string is never
+      // rejected — resolveFormation collapses it to 2-3-1 and the infer
+      // branch below accepts whatever legal shape the picks actually form, so
+      // a legacy 1-2-2-2 squad can still be force-saved.
+      const counts: Record<"GK" | "DEF" | "MID" | "FWD", number> = {
+        GK: 0,
+        DEF: 0,
+        MID: 0,
+        FWD: 0,
+      };
       for (const p of docs) if (p) counts[p.position] += 1;
-      for (const [pos, need] of Object.entries({ GK: 1, DEF: 2, MID: 2, FWD: 2 })) {
-        if (counts[pos] !== need) {
-          throw new Error(`Illegal formation: needs exactly ${need} × ${pos}.`);
+      const legacy = counts.GK === 1 && counts.DEF === 2 && counts.MID === 2 && counts.FWD === 2;
+      const inferred = inferFormation(counts);
+      let storedFormation: string;
+      if (isFormationId(typeof formation === "string" ? formation.trim() : "")) {
+        const chosen = resolveFormation(formation);
+        if (formationMatches(counts, chosen)) {
+          storedFormation = chosen;
+        } else if (inferred) {
+          throw new Error(`Those players form a ${inferred}, not a ${chosen}.`);
+        } else if (legacy) {
+          storedFormation = "2-2-2";
+        } else {
+          const shape = formationShape(chosen);
+          throw new Error(
+            `Illegal formation: needs ${shape.GK} GK, ${shape.DEF} DEF, ${shape.MID} MID, ${shape.FWD} FWD for a ${chosen}.`,
+          );
         }
+      } else {
+        // No usable explicit choice — infer, with the legacy rule as fallback.
+        if (inferred) storedFormation = inferred;
+        else if (legacy) storedFormation = "2-2-2";
+        else throw new Error("Illegal formation: that set of seven is not a valid shape.");
       }
 
       const cap = captainId ?? playerIds[0];
@@ -431,6 +468,7 @@ export const forceSaveSquad = mutation({
           playerIds,
           captainId: cap,
           totalSpent,
+          formation: storedFormation,
         });
       } else {
         await ctx.db.insert("squads", {
@@ -438,6 +476,7 @@ export const forceSaveSquad = mutation({
           playerIds,
           captainId: cap,
           totalSpent,
+          formation: storedFormation,
         });
       }
 
@@ -446,7 +485,7 @@ export const forceSaveSquad = mutation({
         "force_save_squad",
         "squad",
         `@${target.username ?? userId}`,
-        `7 players · ${formatMoney(totalSpent)}${overBudget ? " (over budget — allowed by admin)" : ""}`,
+        `7 players · ${storedFormation} · ${formatMoney(totalSpent)}${overBudget ? " (over budget — allowed by admin)" : ""}`,
       );
       try {
         await ctx.runMutation(internal.activity.logActivity, {
@@ -457,7 +496,7 @@ export const forceSaveSquad = mutation({
       } catch {
         // feed failure is non-fatal
       }
-      return { totalSpent, budget, overBudget };
+      return { totalSpent, budget, overBudget, formation: storedFormation };
     } catch (err) {
       if (
         err instanceof Error &&

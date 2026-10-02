@@ -388,6 +388,7 @@ function RivalInspector({
         house: p.house,
         image: p.image ?? null,
         isCaptain: rival?.captainId === p._id,
+        statusLabel: p.statusLabel ?? null,
       });
       return acc;
     },
@@ -501,7 +502,13 @@ function RivalInspector({
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   The seven
                 </p>
-                <PitchView byPosition={byPosition} emptyLabel="Empty" />
+                <PitchView
+                  byPosition={byPosition}
+                  emptyLabel="Empty"
+                  formation={rival?.formation ?? "2-3-1"}
+                  showStatus
+                  showFormationLabel
+                />
               </div>
             </>
           )}

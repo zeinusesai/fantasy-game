@@ -23,6 +23,10 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { PitchView, type PitchPlayer } from "@/components/PitchView";
+import { StatusBadge } from "@/components/StatusBadge";
+import { DEFAULT_FORMATION, inferFormation, resolveFormation } from "@/convex/formations";
+import type { Position } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type PlayerDoc = Doc<"players">;
@@ -36,6 +40,50 @@ const eventsOf = (m: MatchDoc): TimelineEvent[] =>
 const ratingsOf = (m: MatchDoc): RatingRow[] => m.playerRatings ?? [];
 const homeLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.homeStarters ?? [];
 const awayLineupOf = (m: MatchDoc): Id<"players">[] => m.lineups?.awayStarters ?? [];
+const expectedHomeOf = (m: MatchDoc): Id<"players">[] => m.expectedLineups?.homeStarters ?? [];
+const expectedAwayOf = (m: MatchDoc): Id<"players">[] => m.expectedLineups?.awayStarters ?? [];
+
+/**
+ * The shape a lineup should be drawn in: the formation the Super Admin picked,
+ * otherwise inferred from the actual positions of the named players, otherwise
+ * the 2-3-1 default. `resolveFormation` guarantees a legal id in every branch,
+ * so the pitch can never be laid out against a broken shape.
+ */
+function formationForLineup(
+  docs: PlayerDoc[],
+  stored?: string | null,
+): string {
+  if (typeof stored === "string" && stored.trim()) return resolveFormation(stored);
+  const counts = docs.reduce(
+    (acc, d) => {
+      acc[d.position] = (acc[d.position] ?? 0) + 1;
+      return acc;
+    },
+    {} as Partial<Record<Position, number>>,
+  );
+  return inferFormation(counts) ?? DEFAULT_FORMATION;
+}
+
+/** Player docs for a starter list, skipping any that no longer resolve. */
+function docsFor(starters: Id<"players">[], byId: Map<string, PlayerDoc>): PlayerDoc[] {
+  return (Array.isArray(starters) ? starters : [])
+    .map((id) => byId.get(String(id)))
+    .filter((d): d is PlayerDoc => Boolean(d));
+}
+
+/** Convert player docs into the shape `PitchView` renders. */
+function toPitchPlayers(docs: PlayerDoc[]): PitchPlayer[] {
+  return docs.map((d) => ({
+    playerId: d._id as string,
+    name: d.name,
+    position: d.position,
+    house: d.house,
+    image: d.image ?? null,
+    rating: null,
+    isPotm: false,
+    statusLabel: d.statusLabel ?? null,
+  }));
+}
 
 /**
  * Small circular player photo. Falls back to initials when no custom photo
@@ -242,6 +290,12 @@ function OverviewTab({
 }) {
   const h2hResult = useQuery(api.matches.listMatches);
   const all = h2hResult ?? [];
+  // Pre-kickoff we show the Super Admin's expected seven; once the match is
+  // over the confirmed team sheet takes over. If only one exists we use it.
+  const hasExpected =
+    expectedHomeOf(match).length > 0 || expectedAwayOf(match).length > 0;
+  const hasConfirmed = homeLineupOf(match).length > 0 || awayLineupOf(match).length > 0;
+  const showExpected = match.status !== "completed" && hasExpected && !hasConfirmed;
   const previous = all.filter(
     (m) =>
       m.status === "completed" &&
@@ -285,16 +339,31 @@ function OverviewTab({
         </CardContent>
       </Card>
 
-      {/* Confirmed lineups on a mini pitch */}
+      {/* Lineups on a formation-aware pitch: the Super Admin's expected 7 until
+          the real team sheet is confirmed, then the confirmed starters. */}
       <div className="grid gap-6 lg:grid-cols-2">
         <LineupPitch
           house={match.homeHouse}
-          starters={homeLineupOf(match)}
+          starters={showExpected ? expectedHomeOf(match) : homeLineupOf(match)}
+          formation={showExpected ? match.expectedLineups?.homeFormation : null}
+          expected={showExpected}
+          emptyText={
+            showExpected
+              ? "Expected lineup not set yet — the Super Admin publishes it before kickoff."
+              : "Lineups will be announced before kickoff"
+          }
           byId={byId}
         />
         <LineupPitch
           house={match.awayHouse}
-          starters={awayLineupOf(match)}
+          starters={showExpected ? expectedAwayOf(match) : awayLineupOf(match)}
+          formation={showExpected ? match.expectedLineups?.awayFormation : null}
+          expected={showExpected}
+          emptyText={
+            showExpected
+              ? "Expected lineup not set yet — the Super Admin publishes it before kickoff."
+              : "Lineups will be announced before kickoff"
+          }
           byId={byId}
         />
       </div>
@@ -313,62 +382,67 @@ function H2HStat({ value, label }: { value: number; label: string }) {
   );
 }
 
-/** Mini vertical pitch: GK / DEF / MID / FWD rows from the starting list. */
+/**
+ * Mini vertical pitch for one house, laid out on that house's formation.
+ *
+ * Zero-error: the formation falls back to the shape inferred from the named
+ * players and then to the 2-3-1 default, and a player who no longer resolves
+ * is simply skipped rather than crashing the tab.
+ */
 function LineupPitch({
   house,
   starters,
   byId,
+  formation,
+  expected = false,
+  emptyText = "Lineups will be announced before kickoff",
 }: {
   house: string;
   starters: Id<"players">[];
   byId: Map<string, PlayerDoc>;
+  /** Super Admin's chosen shape; omitted → inferred from the players. */
+  formation?: string | null;
+  expected?: boolean;
+  emptyText?: string;
 }) {
-  const docs = starters.map((id) => byId.get(String(id))).filter(Boolean) as PlayerDoc[];
-  const rows: { position: PlayerDoc["position"]; slots: number; label: string }[] = [
-    { position: "FWD", slots: 2, label: "Forwards" },
-    { position: "MID", slots: 2, label: "Midfielders" },
-    { position: "DEF", slots: 2, label: "Defenders" },
-    { position: "GK", slots: 1, label: "Goalkeeper" },
-  ];
+  const docs = docsFor(starters, byId);
+  const byPosition = toPitchPlayers(docs).reduce(
+    (acc, p) => {
+      (acc[p.position] ??= []).push(p);
+      return acc;
+    },
+    {} as Partial<Record<Position, PitchPlayer[]>>,
+  );
 
   return (
     <Card className="card-sheen border-border/80">
       <CardHeader className="pb-2">
-        <CardTitle className="font-display flex items-center gap-2 text-base font-bold uppercase tracking-wide">
+        <CardTitle className="font-display flex flex-wrap items-center gap-2 text-base font-bold uppercase tracking-wide">
           <HouseBadge house={house as never} /> {house} lineup
+          {expected && (
+            <Badge
+              variant="outline"
+              className="border-sky-400/50 bg-sky-500/15 text-[10px] font-bold uppercase tracking-wide text-sky-200"
+            >
+              Expected XI
+            </Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
         {docs.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-6 text-center">
             <Hourglass className="text-muted-foreground/50 size-8 animate-pulse" />
-            <p className="text-muted-foreground text-sm">
-              Lineups will be announced before kickoff
-            </p>
+            <p className="text-muted-foreground text-sm">{emptyText}</p>
           </div>
         ) : (
-          <div className="pitch-bg rounded-xl border border-emerald-900/40 p-3">
-            {rows.map((row) => (
-              <div key={row.position} className="flex justify-center gap-2 py-1.5">                  {docs
-                  .filter((d) => d.position === row.position)
-                  .slice(0, row.slots)
-                  .map((d) => (
-                    <div
-                      key={d._id}
-                      className="flex w-20 flex-col items-center rounded-lg bg-black/30 px-1 py-1.5"
-                    >
-                      <PlayerMiniPhoto player={d} sizeClass="size-8" />
-                      <span className="mt-1 truncate text-[11px] font-semibold text-white">
-                        {d.name}
-                      </span>
-                      <span className="text-[9px] font-bold uppercase text-white/60">
-                        {d.position}
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            ))}
-          </div>
+          <PitchView
+            byPosition={byPosition}
+            formation={formationForLineup(docs, formation)}
+            showFormationLabel
+            showStatus
+            emptyLabel="—"
+          />
         )}
       </CardContent>
     </Card>
@@ -538,6 +612,7 @@ function SquadRatings({
                 <span className="text-muted-foreground text-[10px] font-bold uppercase">
                   {p.position}
                 </span>
+                <StatusBadge status={p.statusLabel} short />
               </div>
             ))}
             <p className="text-muted-foreground pt-1 text-center text-xs">
@@ -559,6 +634,7 @@ function SquadRatings({
                 <span className="text-muted-foreground shrink-0 text-[10px] font-bold uppercase">
                   {player.position}
                 </span>
+                <StatusBadge status={player.statusLabel} short />
               </div>
               <div className="flex shrink-0 items-center gap-2 text-xs">
                 {rating && rating.goals > 0 && (

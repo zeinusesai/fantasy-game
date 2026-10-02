@@ -40,6 +40,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
+import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
+import type { PlayerStatusLabel } from "@/convex/schema";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges, BADGE_META, ASSIGNABLE_BADGE_KEYS } from "@/components/UserBadge";
 import { HOUSES, POSITION_LABELS, STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
@@ -136,6 +138,7 @@ import {
   SlidersHorizontal,
   Trash2,
   UserCog,
+  Users,
   Users2,
   Wallet,
   Wrench,
@@ -283,7 +286,7 @@ export default function Admin() {
           </TabsList>
 
           <TabsContent value="players" className="mt-4">
-            <PlayersTab canDelete={isSuper} />
+            <PlayersTab isSuper={isSuper} />
           </TabsContent>
           <TabsContent value="requests" className="mt-4">
             <RequestsTab
@@ -341,13 +344,19 @@ export default function Admin() {
 
 // ── Players tab (super admin + moderator) ────────────────────────────────
 
-function PlayersTab({ canDelete }: { canDelete: boolean }) {
+/**
+ * `isSuper` gates the Super-Admin-only roster controls: soft-deleting a
+ * player, setting a custom photo, and the availability status labels.
+ */
+function PlayersTab({ isSuper }: { isSuper: boolean }) {
   const playersResult = useQuery(api.players.listPlayers);
   const players = playersResult ?? [];
   const addPlayer = useMutation(api.players.addPlayer);
   const updatePlayer = useMutation(api.players.updatePlayer);
   const deletePlayer = useMutation(api.players.deletePlayer);
   const setPlayerImage = useMutation(api.players.setPlayerImage);
+  const setPlayerStatus = useMutation(api.players.setPlayerStatus);
+  const bulkSetPlayerStatus = useMutation(api.players.bulkSetPlayerStatus);
 
   const [name, setName] = useState("");
   const [house, setHouse] = useState<House>("Fire");
@@ -359,6 +368,59 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
   const [editHouse, setEditHouse] = useState<House>("Fire");
   const [editPosition, setEditPosition] = useState<Position>("MID");
   const [editPrice, setEditPrice] = useState("");
+
+  // ── Availability status labels (Super Admin only) ──
+  // "Default" clears the stored label, so the player falls back to
+  // "Expected to Start" everywhere in the market and on the pitch.
+  const NONE = "__none__" as const;
+  const [statusBusy, setStatusBusy] = useState<string | null>(null);
+  const [bulkHouse, setBulkHouse] = useState<string>("all");
+  const [bulkStatus, setBulkStatus] = useState<string>(NONE);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const handleSetStatus = async (p: Doc<"players">, next: string) => {
+    setStatusBusy(p._id);
+    try {
+      await setPlayerStatus({
+        playerId: p._id,
+        statusLabel: next === NONE ? null : (next as PlayerStatusLabel),
+      });
+      toast.success(
+        next === NONE
+          ? `${p.name}'s status reset to the default.`
+          : `${p.name} marked "${next}".`,
+      );
+    } catch (err) {
+      // Server errors already arrive as friendly human-readable messages.
+      toast.error(err instanceof Error ? err.message : "Could not update the status.");
+    } finally {
+      setStatusBusy(null);
+    }
+  };
+
+  const handleBulkStatus = async () => {
+    const targets = players.filter((p) => bulkHouse === "all" || p.house === bulkHouse);
+    if (targets.length === 0) {
+      toast.error("No players match that house.");
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const result = await bulkSetPlayerStatus({
+        playerIds: targets.map((p) => p._id),
+        statusLabel: bulkStatus === NONE ? null : (bulkStatus as PlayerStatusLabel),
+      });
+      const what = bulkStatus === NONE ? "cleared" : bulkStatus;
+      toast.success(
+        `${result.updated} player${result.updated === 1 ? "" : "s"} → ${what}.` +
+          (result.skipped > 0 ? ` ${result.skipped} unchanged or skipped.` : ""),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not bulk-update the statuses.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   // ── Player photo management (Super Admin) ──
   const [imgFor, setImgFor] = useState<Doc<"players"> | null>(null);
@@ -552,7 +614,59 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
               No players yet — add the first one on the left.
             </p>
           ) : (
-            <div className="max-h-[520px] overflow-y-auto">
+            <div>
+              {/* Bulk availability update — Super Admin only. */}
+              {isSuper && (
+                <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg border border-border/70 bg-secondary/30 p-3">
+                  <div className="grid gap-1">
+                    <Label className="text-[10px] uppercase text-muted-foreground">House</Label>
+                    <Select value={bulkHouse} onValueChange={setBulkHouse}>
+                      <SelectTrigger className="h-8 w-36 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All houses</SelectItem>
+                        {HOUSES.map((h) => (
+                          <SelectItem key={h} value={h}>
+                            {h}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-[10px] uppercase text-muted-foreground">
+                      Mark as
+                    </Label>
+                    <Select value={bulkStatus} onValueChange={setBulkStatus}>
+                      <SelectTrigger className="h-8 w-44 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE}>Default (Expected to Start)</SelectItem>
+                        {STATUS_OPTIONS.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={handleBulkStatus} disabled={bulkBusy}>
+                    {bulkBusy ? (
+                      <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                    ) : (
+                      <Users className="mr-1.5 size-3.5" />
+                    )}
+                    Apply to {bulkHouse === "all" ? "everyone" : bulkHouse}
+                  </Button>
+                  <p className="text-muted-foreground w-full text-[11px] leading-snug">
+                    Status badges appear on every player card in the market, on the
+                    squad-builder pitch, and in the match control center.
+                  </p>
+                </div>
+              )}
+              <div className="max-h-[520px] overflow-y-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -560,6 +674,7 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                     <TableHead>House</TableHead>
                     <TableHead>Position</TableHead>
                     <TableHead className="text-right">Price</TableHead>
+                    {isSuper && <TableHead className="w-40">Status</TableHead>}
                     <TableHead className="w-24 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -595,6 +710,8 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                             className="h-8 w-24 text-right"
                           />
                         </TableCell>
+                        {/* Status is edited inline via its own select below. */}
+                        {isSuper && <TableCell />}
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
                             <Button
@@ -629,6 +746,33 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                         <TableCell className="text-right font-score font-bold">
                           {formatMoney(p.price)}
                         </TableCell>
+                        {isSuper && (
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              <StatusBadge status={p.statusLabel} short />
+                              <Select
+                                value={p.statusLabel ?? NONE}
+                                onValueChange={(v) => handleSetStatus(p, v)}
+                                disabled={statusBusy === p._id}
+                              >
+                                <SelectTrigger
+                                  className="h-7 w-32 text-[11px]"
+                                  aria-label={`Set status for ${p.name}`}
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={NONE}>Default</SelectItem>
+                                  {STATUS_OPTIONS.map((s) => (
+                                    <SelectItem key={s} value={s}>
+                                      {s}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </TableCell>
+                        )}
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
                             <Button
@@ -642,7 +786,7 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                             <Button size="sm" variant="ghost" onClick={() => startEdit(p)}>
                               <Pencil className="size-3.5" />
                             </Button>
-                            {canDelete && (
+                            {isSuper && (
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -659,6 +803,7 @@ function PlayersTab({ canDelete }: { canDelete: boolean }) {
                   )}
                 </TableBody>
               </Table>
+              </div>
             </div>
           )}
         </CardContent>

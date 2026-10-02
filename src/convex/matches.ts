@@ -12,6 +12,7 @@ import type { Position } from "./schema";
 import { computePlayerPoints, resolveScoringRules, captainMultiplier } from "./points";
 import { getSettingsRow, normalizeSettings } from "./adminConfig";
 import type { Id } from "./_generated/dataModel";
+import { resolveFormation } from "./formations";
 
 // ── Public queries ───────────────────────────────────────────────────────
 
@@ -75,6 +76,8 @@ export const getMatchDetails = query({
       if (match.potmPlayerId) ids.add(match.potmPlayerId);
       for (const id of match.lineups?.homeStarters ?? []) ids.add(id);
       for (const id of match.lineups?.awayStarters ?? []) ids.add(id);
+      for (const id of match.expectedLineups?.homeStarters ?? []) ids.add(id);
+      for (const id of match.expectedLineups?.awayStarters ?? []) ids.add(id);
       for (const ev of match.timelineEvents ?? []) {
         ids.add(ev.playerId);
         if (ev.assistPlayerId) ids.add(ev.assistPlayerId);
@@ -133,6 +136,106 @@ export const setMatchDate = mutation({
  * Validates every id: player must exist, be active, and belong to the
  * correct house. Same-transaction patch keeps lineups atomic.
  */
+/**
+ * Super Admin: set the EXPECTED starting 7 for each house before kickoff.
+ *
+ * This is the pre-match prediction (rendered on the match preview) and is
+ * completely separate from `setLineups`, which records who actually started
+ * and feeds the scoring engine.
+ *
+ * Defensive: ids are de-duped, unknown/removed players are rejected with a
+ * readable message, a player can never appear for both houses, and each side
+ * is capped at 7. Formations are normalised through `resolveFormation`, so an
+ * unexpected string can never break the pitch layout. Passing empty arrays
+ * clears the expectation.
+ */
+export const setExpectedLineups = mutation({
+  args: {
+    matchId: v.id("matches"),
+    homeStarters: v.array(v.id("players")),
+    awayStarters: v.array(v.id("players")),
+    homeFormation: v.optional(v.string()),
+    awayFormation: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Only the Super Admin can edit expected lineups.",
+      );
+    }
+
+    try {
+      const match = await ctx.db.get(args.matchId);
+      if (!match) throw new Error("Match not found — it may have been removed.");
+
+      // Normalize arrays defensively (a stale client can send junk).
+      const homeStarters = Array.from(
+        new Set(
+          (Array.isArray(args.homeStarters) ? args.homeStarters : []).filter(
+            (id): id is Id<"players"> => typeof id === "string" && id.length > 0,
+          ),
+        ),
+      );
+      const awayStarters = Array.from(
+        new Set(
+          (Array.isArray(args.awayStarters) ? args.awayStarters : []).filter(
+            (id): id is Id<"players"> => typeof id === "string" && id.length > 0,
+          ),
+        ),
+      );
+
+      if (homeStarters.length > 7 || awayStarters.length > 7) {
+        throw new Error("Each house can have at most 7 expected starters.");
+      }
+
+      const all = [...homeStarters, ...awayStarters];
+      if (new Set(all.map(String)).size !== all.length) {
+        throw new Error("A player cannot be expected to start for both houses.");
+      }
+
+      for (let i = 0; i < all.length; i++) {
+        const doc = await ctx.db.get(all[i]).catch(() => null);
+        if (!doc || !doc.active) {
+          throw new Error(
+            "One of those players no longer exists or was removed — refresh the roster.",
+          );
+        }
+        const expectedHouse = i < homeStarters.length ? match.homeHouse : match.awayHouse;
+        if (doc.house !== expectedHouse) {
+          throw new Error(
+            `${doc.name} belongs to ${doc.house}, not ${expectedHouse} — check the expected lineup.`,
+          );
+        }
+      }
+
+      const homeFormation = resolveFormation(args.homeFormation);
+      const awayFormation = resolveFormation(args.awayFormation);
+
+      // Clearing: empty on both sides removes the field entirely.
+      if (homeStarters.length === 0 && awayStarters.length === 0) {
+        await ctx.db.patch(args.matchId, { expectedLineups: undefined });
+        return { home: 0, away: 0, cleared: true };
+      }
+
+      await ctx.db.patch(args.matchId, {
+        expectedLineups: { homeStarters, awayStarters, homeFormation, awayFormation },
+      });
+      return {
+        home: homeStarters.length,
+        away: awayStarters.length,
+        homeFormation,
+        awayFormation,
+        cleared: false,
+      };
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save the expected lineups — please try again.");
+    }
+  },
+});
+
 export const setLineups = mutation({
   args: {
     matchId: v.id("matches"),

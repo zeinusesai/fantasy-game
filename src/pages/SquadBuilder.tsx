@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { PitchView } from "@/components/PitchView";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { StatusBadge } from "@/components/StatusBadge";
 import { HouseBadge, HouseCrest, PositionChip, useHouseName } from "@/components/houses";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatMoney, parseMoneyInput, safeBudget, toSafeAmount } from "@/convex/configDefaults";
+import {
+  DEFAULT_FORMATION,
+  FORMATION_PRESETS,
+  formationBlurb,
+  formationShape,
+  inferFormation,
+  resolveFormation,
+} from "@/convex/formations";
 import { CHIP_GW1, CHIP_GW2 } from "@/convex/configDefaults";
 import { HOUSES, POSITION_LABELS } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
@@ -34,14 +43,17 @@ import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { PickedByDialog } from "@/components/PickedByDialog";
 import { downloadShareCard } from "@/lib/shareCard";
-import { Share2, Zap, Lock } from "lucide-react";
+import { Share2, Zap, Lock, LayoutGrid } from "lucide-react";
 import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import type { Id } from "@/convex/_generated/dataModel";
 import type { House, Position } from "@/convex/schema";
 
-const FORMATION: Record<Position, number> = { GK: 1, DEF: 2, MID: 2, FWD: 2 };
+// Row order for the position filter + the shape the platform used before
+// custom formations existed. The live shape always comes from
+// `formationShape(formation)` below, so this is only a filter-key list.
+const POSITION_ORDER: Position[] = ["GK", "DEF", "MID", "FWD"];
 
 type PlayerRow = {
   _id: Id<"players">;
@@ -50,6 +62,7 @@ type PlayerRow = {
   house: House;
   position: Position;
   image?: string | null;
+  statusLabel?: string | null;
 };
 
 /** Small circular player photo with a graceful initials fallback. */
@@ -112,6 +125,9 @@ export default function SquadBuilder() {
   const [selected, setSelected] = useState<Id<"players">[]>([]);
   const [captainId, setCaptainId] = useState<Id<"players"> | null>(null);
   const [houseFilter, setHouseFilter] = useState<string>("all");
+  // Chosen 7-a-side shape. Always resolved through resolveFormation, so an
+  // unexpected value can never produce a broken pitch layout.
+  const [formation, setFormation] = useState<string>(DEFAULT_FORMATION);
   const [positionFilter, setPositionFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
@@ -281,6 +297,9 @@ export default function SquadBuilder() {
       setInitialized(true);
       setSelected(mySquad.players.map((p) => p._id));
       setCaptainId(mySquad.captainId);
+      // Saved squads always carry a server-resolved formation; the ?? keeps
+      // this safe if the field is ever absent.
+      setFormation(resolveFormation(mySquad.formation ?? DEFAULT_FORMATION));
     }
   }, [mySquad, initialized]);
 
@@ -325,10 +344,15 @@ export default function SquadBuilder() {
     return true;
   });
 
-  const formationComplete = FORMATION.GK === positionCounts.GK &&
-    FORMATION.DEF === positionCounts.DEF &&
-    FORMATION.MID === positionCounts.MID &&
-    FORMATION.FWD === positionCounts.FWD;
+  // The shape the manager is currently building against, and whether the
+  // selected 7 already satisfy it. `positionCounts` is total, so this is false
+  // until all seven are picked.
+  const currentShape = formationShape(formation);
+  const formationComplete =
+    positionCounts.GK === currentShape.GK &&
+    positionCounts.DEF === currentShape.DEF &&
+    positionCounts.MID === currentShape.MID &&
+    positionCounts.FWD === currentShape.FWD;
 
   const houseLimitBroken = Object.entries(houseCounts).some(
     ([, count]) => count > houseLimit,
@@ -341,7 +365,7 @@ export default function SquadBuilder() {
   if (selected.length > 7) problems.push("You have more than 7 players — remove some.");
   if (!formationComplete && selected.length === 7) {
     problems.push(
-      `Formation must be 1 GK / 2 DEF / 2 MID / 2 FWD (you have ${positionCounts.GK} GK, ${positionCounts.DEF} DEF, ${positionCounts.MID} MID, ${positionCounts.FWD} FWD).`,
+      `${resolveFormation(formation)} needs ${currentShape.GK} GK, ${currentShape.DEF} DEF, ${currentShape.MID} MID, ${currentShape.FWD} FWD (you have ${positionCounts.GK} GK, ${positionCounts.DEF} DEF, ${positionCounts.MID} MID, ${positionCounts.FWD} FWD).`,
     );
   }
   if (houseLimitBroken) {
@@ -374,8 +398,8 @@ export default function SquadBuilder() {
     }
     setSaving(true);
     try {
-      await saveSquad({ playerIds: selected, captainId });
-      toast.success("Squad saved! Good luck, manager.");
+      await saveSquad({ playerIds: selected, captainId, formation: resolveFormation(formation) });
+      toast.success(`Squad saved as a ${resolveFormation(formation)}! Good luck, manager.`);
       // Legal squad saved — the budget-reset guidance has done its job.
       setBudgetResetMode(false);
     } catch (err) {
@@ -396,6 +420,7 @@ export default function SquadBuilder() {
         // Pass the custom photo through to the pitch card (null-safe).
         image: p.image ?? null,
         isCaptain: captainId === p._id,
+        statusLabel: p.statusLabel ?? null,
       });
       return acc;
     },
@@ -406,8 +431,23 @@ export default function SquadBuilder() {
       house: House;
       image: string | null;
       isCaptain: boolean;
+      statusLabel: string | null;
     }>>,
   );
+
+  /**
+   * Change shape. When the current 7 already matches a legal preset, follow
+   * the manager to it automatically; otherwise keep the picks and let them
+   * finish the new shape.
+   */
+  const changeFormation = (next: string) => {
+    const safe = resolveFormation(next);
+    setFormation(safe);
+    const autoFit = inferFormation(positionCounts);
+    if (selectedPlayers.length === 7 && autoFit && autoFit !== safe) {
+      toast.message(`Switched to ${safe} · ${formationBlurb(safe)}`);
+    }
+  };
 
   return (
     <AppNav>
@@ -592,7 +632,55 @@ export default function SquadBuilder() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <PitchView byPosition={byPosition} onSlotClick={() => {}} />
+                  <PitchView
+                    byPosition={byPosition}
+                    onSlotClick={() => {}}
+                    formation={formation}
+                    showStatus
+                    showFormationLabel
+                  />
+                </CardContent>
+              </Card>
+
+              {/* Formation selector — the same 5 shapes the server enforces. */}
+              <Card className="border-border/80">
+                <CardHeader className="pb-2">
+                  <CardTitle className="font-display flex items-center gap-2 text-sm font-bold uppercase tracking-wide">
+                    <LayoutGrid className="text-primary size-4" />
+                    Formation
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {FORMATION_PRESETS.map((preset) => {
+                      const active = preset.id === formation;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => changeFormation(preset.id)}
+                          aria-pressed={active}
+                          title={`${preset.label} · ${preset.blurb}`}
+                          className={cn(
+                            "rounded-lg border px-2 py-1.5 text-left transition-all",
+                            active
+                              ? "border-primary bg-primary/15 ring-primary/40 ring-1"
+                              : "border-border/70 bg-secondary/40 hover:border-primary/40",
+                          )}
+                        >
+                          <span className="font-score block text-sm font-bold">{preset.label}</span>
+                          <span className="text-muted-foreground block text-[10px] font-medium">
+                            {preset.blurb}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-muted-foreground mt-2 text-[11px] leading-snug">
+                    {resolveFormation(formation)} · {formationBlurb(formation)} — needs{" "}
+                    {currentShape.GK} GK, {currentShape.DEF} DEF, {currentShape.MID} MID,{" "}
+                    {currentShape.FWD} FWD.
+                  </p>
                 </CardContent>
               </Card>
               <Card className="border-border/80">
@@ -657,7 +745,7 @@ export default function SquadBuilder() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All positions</SelectItem>
-                        {(Object.keys(FORMATION) as Position[]).map((pos) => (
+                        {POSITION_ORDER.map((pos) => (
                           <SelectItem key={pos} value={pos}>
                             {POSITION_LABELS[pos]}
                           </SelectItem>
@@ -716,8 +804,11 @@ export default function SquadBuilder() {
                                 {isSelected && <Check className="text-primary size-3.5 shrink-0" />}
                                 {p.name}
                               </p>
-                              <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-xs">
+                              <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                                 {houseName(p.house)} <PositionChip position={p.position} />
+                                {/* Availability set by the Super Admin; defaults to
+                                    "Expected to Start" when unassigned. */}
+                                <StatusBadge status={p.statusLabel} short />
                               </p>
                               {/* Ownership: exact pick count + % — safe at 0 squads.
                                   The count is a button: opens the pick-inspection

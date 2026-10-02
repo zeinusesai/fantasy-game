@@ -6,6 +6,14 @@ import type { House, MatchStatus } from "@/convex/schema";
 import { HOUSES, STAGE_LABELS } from "@/lib/fantasy";
 import { HouseBadge, PositionChip, RatingBadge } from "@/components/houses";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { StatusBadge } from "@/components/StatusBadge";
+import {
+  DEFAULT_FORMATION,
+  FORMATION_PRESETS,
+  formationBlurb,
+  formationShape,
+  resolveFormation,
+} from "@/convex/formations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +41,7 @@ import {
   Star,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 
 type PlayerDoc = Doc<"players">;
@@ -61,6 +70,7 @@ export function MatchControlCenter() {
   const setMatchStatus = useMutation(api.matches.setMatchStatus);
   const setMatchDate = useMutation(api.matches.setMatchDate);
   const setLineups = useMutation(api.matches.setLineups);
+  const setExpectedLineups = useMutation(api.matches.setExpectedLineups);
   const logTimelineEvent = useMutation(api.matches.logTimelineEvent);
   const removeTimelineEvent = useMutation(api.matches.removeTimelineEvent);
   const setPlayerRatings = useMutation(api.matches.setPlayerRatings);
@@ -83,6 +93,11 @@ export function MatchControlCenter() {
   const [dateInput, setDateInput] = useState("");
   const [home, setHome] = useState<string[]>([]);
   const [away, setAway] = useState<string[]>([]);
+  // Pre-kickoff "expected starting 7" + the shape each house will line up in.
+  const [expHome, setExpHome] = useState<string[]>([]);
+  const [expAway, setExpAway] = useState<string[]>([]);
+  const [expHomeFormation, setExpHomeFormation] = useState<string>(DEFAULT_FORMATION);
+  const [expAwayFormation, setExpAwayFormation] = useState<string>(DEFAULT_FORMATION);
   const [ratings, setRatings] = useState<Record<string, typeof EMPTY_RATING>>({});
   const [potm, setPotm] = useState<string>("");
   const [eventType, setEventType] = useState<"goal" | "yellow_card" | "red_card" | "sub">("goal");
@@ -98,6 +113,12 @@ export function MatchControlCenter() {
     setDateInput(match.matchDate ?? match.kickoffLabel ?? "");
     setHome((match.lineups?.homeStarters ?? []).map(String));
     setAway((match.lineups?.awayStarters ?? []).map(String));
+    // resolveFormation guarantees a legal shape even if the stored string is
+    // missing, legacy or corrupted.
+    setExpHome((match.expectedLineups?.homeStarters ?? []).map(String));
+    setExpAway((match.expectedLineups?.awayStarters ?? []).map(String));
+    setExpHomeFormation(resolveFormation(match.expectedLineups?.homeFormation ?? DEFAULT_FORMATION));
+    setExpAwayFormation(resolveFormation(match.expectedLineups?.awayFormation ?? DEFAULT_FORMATION));
     setPotm(match.potmPlayerId ? String(match.potmPlayerId) : "");
     const seeded: Record<string, typeof EMPTY_RATING> = {};
     for (const r of match.playerRatings ?? []) {
@@ -124,6 +145,93 @@ export function MatchControlCenter() {
       setList([...list, id]);
     } else {
       toast.error("That team already has 7 starters — remove one first.");
+    }
+  };
+
+  /**
+   * Client-side pre-check for the expected lineup. The server re-validates
+   * everything; this only exists to give the admin an instant, specific
+   * warning before the round trip.
+   */
+  const expectedProblem = (side: string, ids: string[], formation: string): string | null => {
+    const roster = players.filter((p) => ids.includes(String(p._id)));
+    if (roster.length !== ids.length) return `${side}: one of those players no longer exists.`;
+    if (new Set(ids).size !== ids.length) return `${side}: a player is listed twice.`;
+    if (ids.length > 7) return `${side}: at most 7 expected starters.`;
+    const crossSide = ids.filter((id) =>
+      (side === match?.homeHouse ? expAway : expHome).includes(id),
+    );
+    if (crossSide.length > 0) return `${side}: a player cannot start for both houses.`;
+    const counts = roster.reduce(
+      (acc, p) => {
+        acc[p.position] += 1;
+        return acc;
+      },
+      { GK: 0, DEF: 0, MID: 0, FWD: 0 } as Record<string, number>,
+    );
+    const shape = formationShape(formation);
+    if (
+      counts.GK !== shape.GK ||
+      counts.DEF !== shape.DEF ||
+      counts.MID !== shape.MID ||
+      counts.FWD !== shape.FWD
+    ) {
+      return `${side}: ${formation} needs ${shape.GK} GK, ${shape.DEF} DEF, ${shape.MID} MID, ${shape.FWD} FWD (you picked ${counts.GK}/${counts.DEF}/${counts.MID}/${counts.FWD}).`;
+    }
+    return null;
+  };
+
+  const saveExpected = async () => {
+    if (!activeId || !match) return;
+    if (expHome.length === 0 && expAway.length === 0) {
+      toast.info("Nothing to publish — pick at least one expected starter.");
+      return;
+    }
+    // Validate both sides before hitting the server.
+    for (const [label, ids, f] of [
+      [match.homeHouse, expHome, expHomeFormation],
+      [match.awayHouse, expAway, expAwayFormation],
+    ] as Array<[string, string[], string]>) {
+      if (ids.length === 0) continue; // a side may legitimately be unknown yet
+      const problem = expectedProblem(label, ids, f);
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await setExpectedLineups({
+        matchId: activeId as Id<"matches">,
+        homeStarters: expHome as Id<"players">[],
+        awayStarters: expAway as Id<"players">[],
+        homeFormation: resolveFormation(expHomeFormation),
+        awayFormation: resolveFormation(expAwayFormation),
+      });
+      toast.success("Expected lineups published to the match preview.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the expected lineups.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearExpected = async () => {
+    if (!activeId) return;
+    setBusy(true);
+    try {
+      await setExpectedLineups({
+        matchId: activeId as Id<"matches">,
+        homeStarters: [],
+        awayStarters: [],
+      });
+      setExpHome([]);
+      setExpAway([]);
+      toast.success("Expected lineups cleared.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not clear the expected lineups.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -395,6 +503,141 @@ export function MatchControlCenter() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Expected (pre-kickoff) lineups — shown on the match preview until
+                the confirmed team sheet lands. Completely separate from the
+                confirmed lineups above, which feed the scoring engine. */}
+            <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-sky-200">
+                  <Users className="size-3.5" /> Expected starting 7 (match preview)
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <Button size="sm" variant="outline" onClick={clearExpected} disabled={busy}>
+                    <X className="mr-1.5 size-3.5" /> Clear
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={saveExpected} disabled={busy}>
+                    <Save className="mr-1.5 size-3.5" /> Publish expected
+                  </Button>
+                </div>
+              </div>
+              <p className="text-muted-foreground mb-3 text-[11px] leading-snug">
+                Pick the seven each house is expected to start and choose their shape. The
+                match preview renders both teams on their formation grid until you publish
+                the real lineups above.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {([
+                  {
+                    label: match.homeHouse,
+                    roster: homeRoster,
+                    list: expHome,
+                    setList: setExpHome,
+                    formation: expHomeFormation,
+                    setFormation: setExpHomeFormation,
+                  },
+                  {
+                    label: match.awayHouse,
+                    roster: awayRoster,
+                    list: expAway,
+                    setList: setExpAway,
+                    formation: expAwayFormation,
+                    setFormation: setExpAwayFormation,
+                  },
+                ] as const).map((side) => {
+                  // Local mirror of the server-side rule, for instant feedback.
+                  const shape = formationShape(side.formation);
+                  const counts = side.roster
+                    .filter((p) => side.list.includes(String(p._id)))
+                    .reduce(
+                      (acc, p) => {
+                        acc[p.position] += 1;
+                        return acc;
+                      },
+                      { GK: 0, DEF: 0, MID: 0, FWD: 0 } as Record<string, number>,
+                    );
+                  const fits =
+                    side.list.length === 0 ||
+                    (counts.GK === shape.GK &&
+                      counts.DEF === shape.DEF &&
+                      counts.MID === shape.MID &&
+                      counts.FWD === shape.FWD);
+                  return (
+                    <div key={side.label}>
+                      <p className="mb-1.5 flex flex-wrap items-center gap-1.5 text-sm font-semibold">
+                        <HouseBadge house={side.label as House} /> {side.label}
+                        <Badge variant="secondary" className="text-[10px]">
+                          {side.list.length}/7
+                        </Badge>
+                        {!fits && (
+                          <Badge
+                            variant="outline"
+                            className="border-rose-500/50 bg-rose-500/15 text-[10px] text-rose-200"
+                          >
+                            {counts.GK}/{shape.GK} GK · {counts.DEF}/{shape.DEF} DEF ·{" "}
+                            {counts.MID}/{shape.MID} MID · {counts.FWD}/{shape.FWD} FWD
+                          </Badge>
+                        )}
+                      </p>
+                      <div className="mb-2 grid grid-cols-3 gap-1">
+                        {FORMATION_PRESETS.map((preset) => {
+                          const active = preset.id === side.formation;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => side.setFormation(preset.id)}
+                              aria-pressed={active}
+                              title={`${preset.label} · ${preset.blurb}`}
+                              className={`rounded-md border px-1.5 py-1 text-left transition-all ${
+                                active
+                                  ? "border-sky-400 bg-sky-500/20 ring-1 ring-sky-400/50"
+                                  : "border-border/70 bg-secondary/40 hover:border-sky-400/40"
+                              }`}
+                            >
+                              <span className="block text-[11px] font-bold">{preset.label}</span>
+                              <span className="text-muted-foreground block text-[9px]">
+                                {preset.blurb}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {side.roster.map((p) => {
+                          const pid = String(p._id);
+                          const on = side.list.includes(pid);
+                          return (
+                            <button
+                              key={p._id}
+                              type="button"
+                              onClick={() => toggleStarter(side.list, side.setList, pid)}
+                              className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-2.5 text-xs font-medium ring-1 transition-all ${
+                                on
+                                  ? "bg-sky-500/20 text-sky-200 ring-sky-400/50"
+                                  : "bg-secondary text-secondary-foreground ring-border hover:ring-sky-400/40"
+                              }`}
+                            >
+                              <PlayerAvatar player={p} size={20} className="ring-0" />
+                              {p.name}
+                              <StatusBadge status={p.statusLabel} dot />
+                            </button>
+                          );
+                        })}
+                        {side.roster.length === 0 && (
+                          <p className="text-muted-foreground text-xs">
+                            No players registered for this house yet.
+                          </p>
+                        )}
+                      </div>
+                      <p className="text-muted-foreground mt-1.5 text-[10px]">
+                        {resolveFormation(side.formation)} · {formationBlurb(side.formation)}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

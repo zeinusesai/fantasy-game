@@ -7,10 +7,25 @@ import { internal } from "./_generated/api";
 import {
   houseValidator,
   positionValidator,
+  statusLabelValidator,
   HOUSES,
   POSITIONS,
+  PLAYER_STATUS_LABELS,
 } from "./schema";
-import type { House, Position } from "./schema";
+import type { House, PlayerStatusLabel, Position } from "./schema";
+
+/**
+ * Defensive normaliser for a status label. Unknown / missing / non-string
+ * values collapse to null (meaning "no label stored" → the UI shows the
+ * "Expected to Start" default), so a bad client payload can never write junk
+ * into the `statusLabel` field or blow up the market UI.
+ */
+function normalizeStatusLabel(value: unknown): PlayerStatusLabel | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const match = PLAYER_STATUS_LABELS.find((s) => s === trimmed);
+  return match ?? null;
+}
 
 export const listPlayers = query({
   args: {},
@@ -63,6 +78,111 @@ export const setPlayerImage = mutation({
     } catch {
       throw new Error("Could not save the player image — please try again.");
     }
+  },
+});
+
+/**
+ * Super Admin only: set (or clear) one player's availability label.
+ * `statusLabel: null` removes the field so the player falls back to the
+ * "Expected to Start" default everywhere.
+ */
+export const setPlayerStatus = mutation({
+  args: {
+    playerId: v.id("players"),
+    statusLabel: v.union(statusLabelValidator, v.null()),
+  },
+  handler: async (ctx, { playerId, statusLabel }) => {
+    await requireSuperAdmin(ctx);
+
+    const player = await ctx.db.get(playerId);
+    if (!player) throw new Error("Player not found — it may have already been removed.");
+
+    const next = normalizeStatusLabel(statusLabel);
+    const current = normalizeStatusLabel(player.statusLabel);
+    if (next === current) return { statusLabel: current };
+
+    try {
+      await ctx.db.patch(playerId, { statusLabel: next ?? undefined });
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: next ? "set_player_status" : "clear_player_status",
+          category: "config",
+          target: player.name,
+          detail: next ? `${next}` : "cleared (defaults to Expected to Start)",
+        });
+      } catch {
+        // audit is non-fatal
+      }
+      return { statusLabel: next };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not found")) throw err;
+      throw new Error("Could not update the player status — please try again.");
+    }
+  },
+});
+
+/**
+ * Super Admin only: set the same availability label on many players at once
+ * (e.g. a whole house or the entire roster). Only ids that still exist are
+ * touched; unknown ids are skipped instead of failing the whole batch.
+ */
+export const bulkSetPlayerStatus = mutation({
+  args: {
+    playerIds: v.array(v.id("players")),
+    statusLabel: v.union(statusLabelValidator, v.null()),
+  },
+  handler: async (ctx, { playerIds, statusLabel }) => {
+    await requireSuperAdmin(ctx);
+
+    const next = normalizeStatusLabel(statusLabel);
+    // De-dupe defensively so a repeated id is never double-patched.
+    const ids = Array.from(
+      new Set((Array.isArray(playerIds) ? playerIds : []).filter((id) => typeof id === "string")),
+    );
+    if (ids.length === 0) {
+      throw new Error("Select at least one player to update.");
+    }
+    if (ids.length > 200) {
+      throw new Error("Too many players selected — update 200 at a time.");
+    }
+
+    let updated = 0;
+    let skipped = 0;
+    const names: string[] = [];
+    for (const id of ids) {
+      try {
+        const player = await ctx.db.get(id);
+        if (!player) {
+          skipped += 1;
+          continue;
+        }
+        const current = normalizeStatusLabel(player.statusLabel);
+        if (current === next) {
+          skipped += 1;
+          continue;
+        }
+        await ctx.db.patch(id, { statusLabel: next ?? undefined });
+        updated += 1;
+        if (names.length < 5) names.push(player.name);
+      } catch {
+        skipped += 1;
+      }
+    }
+
+    if (updated > 0) {
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: next ? "bulk_set_player_status" : "bulk_clear_player_status",
+          category: "config",
+          target: `${updated} player${updated === 1 ? "" : "s"}`,
+          detail: `${next ?? "cleared"} · ${names.join(", ")}${names.length < updated ? "…" : ""}`,
+        });
+      } catch {
+        // audit is non-fatal
+      }
+    }
+
+    return { updated, skipped, statusLabel: next };
   },
 });
 

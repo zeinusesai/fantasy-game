@@ -20,6 +20,17 @@ export const positionValidator = v.union(
 );
 export type Position = Infer<typeof positionValidator>;
 
+// ── Player availability status labels (set by the Super Admin) ──────────
+export const PLAYER_STATUS_LABELS = [
+  "Expected to Start",
+  "Sub",
+  "Not Play",
+] as const;
+export const statusLabelValidator = v.union(
+  ...PLAYER_STATUS_LABELS.map((s) => v.literal(s)),
+);
+export type PlayerStatusLabel = Infer<typeof statusLabelValidator>;
+
 export const STAGES = [
   "semifinal1",
   "semifinal2",
@@ -109,6 +120,9 @@ const schema = defineSchema(
       stats: v.optional(v.any()),
       // Optional custom player photo (URL or data URL) set by the Super Admin.
       image: v.optional(v.string()),
+      // Optional availability label (Expected to Start | Sub | Not Play) set
+      // by the Super Admin; absent = treated as "Expected to Start" in the UI.
+      statusLabel: v.optional(statusLabelValidator),
     })
       .index("by_house", ["house"])
       .index("by_position", ["position"])
@@ -120,7 +134,9 @@ const schema = defineSchema(
       playerIds: v.array(v.id("players")), // exactly 7
       captainId: v.id("players"), // one of playerIds
       totalSpent: v.number(),
-      // lastMatchPoints / totalPoints are derived from matchScores, see points.ts
+      // Selected 7-a-side shape, e.g. "2-3-1" (legacy squads have none and
+      // infer their shape from the selected players).
+      formation: v.optional(v.string()),
       // One-time "Double Down" chip: armed for gw1 or gw2, consumed at settle.
       activeChip: v.optional(v.string()),
       chipUsed: v.optional(v.boolean()),
@@ -217,6 +233,16 @@ const schema = defineSchema(
         v.object({
           homeStarters: v.array(v.id("players")), // up to 7 player ids
           awayStarters: v.array(v.id("players")),
+        }),
+      ),
+      // Super Admin's pre-kickoff expectation (the "predicted" starting 7 per
+      // house) — rendered on the match preview until the real lineup lands.
+      expectedLineups: v.optional(
+        v.object({
+          homeStarters: v.array(v.id("players")), // up to 7 player ids
+          awayStarters: v.array(v.id("players")),
+          homeFormation: v.optional(v.string()),
+          awayFormation: v.optional(v.string()),
         }),
       ),
       playerRatings: v.optional(

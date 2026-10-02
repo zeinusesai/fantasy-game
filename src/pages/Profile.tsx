@@ -84,6 +84,7 @@ export default function Profile() {
         house: p.house,
         image: p.image ?? null,
         isCaptain: mySquad?.captainId === p._id,
+        statusLabel: p.statusLabel ?? null,
       });
       return acc;
     },
@@ -94,6 +95,7 @@ export default function Profile() {
       house: string;
       image: string | null;
       isCaptain: boolean;
+      statusLabel: string | null;
     }>>,
   );
 
@@ -246,7 +248,13 @@ export default function Profile() {
             </CardHeader>
             <CardContent>
               <div className="mx-auto max-w-lg">
-                <PitchView byPosition={byPosition} emptyLabel="Pick" />
+                <PitchView
+                  byPosition={byPosition}
+                  emptyLabel="Pick"
+                  formation={mySquad?.formation ?? "2-3-1"}
+                  showStatus
+                  showFormationLabel
+                />
               </div>
             </CardContent>
           </Card>

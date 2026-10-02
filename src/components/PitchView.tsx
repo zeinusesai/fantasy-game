@@ -1,6 +1,14 @@
 import { cn } from "@/lib/utils";
 import { HouseDot, RatingBadge } from "./houses";
 import { PlayerAvatar, type PhotoSource } from "./PlayerAvatar";
+import { StatusBadge } from "./StatusBadge";
+import {
+  DEFAULT_FORMATION,
+  formationSlots,
+  formationSummary,
+  resolveFormation,
+} from "@/convex/formations";
+import type { FormationSlot } from "@/convex/formations";
 import type { House, Position } from "@/convex/schema";
 
 export type PitchPlayer = {
@@ -16,14 +24,82 @@ export type PitchPlayer = {
   rating?: number | null;
   isCaptain?: boolean;
   isPotm?: boolean;
+  /** Super Admin availability label; absent = treated as "Expected to Start". */
+  statusLabel?: string | null;
 };
 
-const ROWS: { position: Position; slots: number; label: string }[] = [
-  { position: "GK", slots: 1, label: "Goalkeeper" },
-  { position: "DEF", slots: 2, label: "Defenders" },
-  { position: "MID", slots: 2, label: "Midfielders" },
-  { position: "FWD", slots: 2, label: "Forwards" },
-];
+/** Row order used everywhere: goalkeeper (bottom) up to forwards (top). */
+const ROW_ORDER: Position[] = ["GK", "DEF", "MID", "FWD"];
+
+/** Where an overflowing player is parked so they can never fall off the pitch. */
+const OVERFLOW_Y = 97;
+
+/**
+ * Map the selected players onto the formation's 7 pitch slots.
+ *
+ * Two passes so nothing is ever dropped: players are first placed in a slot
+ * that matches their own position, then any leftovers (e.g. three defenders
+ * under a 2-3-1) fill whatever slots are still empty. A player who still has
+ * nowhere to go gets a safe overflow row at the bottom — the pitch always
+ * shows every player passed in.
+ */
+function assignToSlots(
+  byPosition: Partial<Record<Position, PitchPlayer[]>>,
+  formation: string,
+): Array<{ slot: FormationSlot; player: PitchPlayer | null }> {
+  const base = formationSlots(formation); // always exactly 7 slots
+  const cells: Array<{ slot: FormationSlot; player: PitchPlayer | null }> = base.map((slot) => ({
+    slot,
+    player: null,
+  }));
+
+  const pools = new Map<Position, PitchPlayer[]>();
+  for (const position of ROW_ORDER) {
+    const list = Array.isArray(byPosition[position]) ? byPosition[position] : [];
+    // Defensive: keep only entries that look like real players. The id must be
+    // non-empty — a blank one would collide as a React key and render nothing.
+    pools.set(
+      position,
+      list.filter(
+        (p): p is PitchPlayer =>
+          !!p &&
+          typeof p.playerId === "string" &&
+          p.playerId.trim().length > 0 &&
+          typeof p.name === "string",
+      ),
+    );
+  }
+
+  // Pass 1 — position-accurate placement.
+  for (const position of ROW_ORDER) {
+    const pool = pools.get(position) ?? [];
+    let taken = 0;
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i].slot.position === position && taken < pool.length) {
+        cells[i].player = pool[taken];
+        taken += 1;
+      }
+    }
+    pools.set(position, pool.slice(taken));
+  }
+
+  // Pass 2 — leftovers fill any remaining slot.
+  const leftovers: PitchPlayer[] = [];
+  for (const position of ROW_ORDER) leftovers.push(...(pools.get(position) ?? []));
+  let li = 0;
+  for (let i = 0; i < cells.length && li < leftovers.length; i++) {
+    if (!cells[i].player) {
+      cells[i].player = leftovers[li];
+      li += 1;
+    }
+  }
+
+  // Pass 3 — still homeless players get a safe spot below the pitch line.
+  for (; li < leftovers.length; li++) {
+    cells.push({ slot: { position: leftovers[li].position, x: 50, y: OVERFLOW_Y }, player: leftovers[li] });
+  }
+  return cells;
+}
 
 /**
  * Circular player badge with optional custom photo. If the photo URL is
@@ -88,69 +164,100 @@ export function EmptySlot({ label }: { label?: string }) {
 }
 
 /**
- * Vertical pitch: rows from goalkeeper (bottom) to forwards (top).
- * `byPosition` supplies the players for each row; missing slots render empty.
+ * Vertical pitch: goalkeeper at the bottom, forwards at the top, laid out on
+ * the selected 7-a-side formation's positional grid.
+ *
+ * `formation` is resolved through `resolveFormation`, so a missing, legacy or
+ * corrupted value silently falls back to the 2-3-1 balanced default instead of
+ * breaking the layout.
  */
 export function PitchView({
   byPosition,
   emptyLabel,
   onSlotClick,
+  formation,
+  showStatus = false,
+  showFormationLabel = false,
+  className,
 }: {
   byPosition: Partial<Record<Position, PitchPlayer[]>>;
   emptyLabel?: string;
   onSlotClick?: (position: Position) => void;
+  /** Formation id, e.g. "3-2-1". Unknown/missing → 2-3-1. */
+  formation?: string | null;
+  /** Render the colour-coded availability dot under each player. */
+  showStatus?: boolean;
+  /** Show a "2-3-1 · Balanced" pill in the corner. */
+  showFormationLabel?: boolean;
+  className?: string;
 }) {
+  // Single safe resolution point — everything downstream uses this string.
+  const currentFormation = resolveFormation(formation ?? DEFAULT_FORMATION);
+  const cells = assignToSlots(byPosition, currentFormation);
+
   return (
-    <div className="pitch-bg relative overflow-hidden rounded-2xl border border-emerald-900/50 p-4 shadow-inner">
+    <div
+      className={cn(
+        "pitch-bg relative overflow-hidden rounded-2xl border border-emerald-900/50 p-4 shadow-inner",
+        className,
+      )}
+    >
       {/* markings */}
       <div className="pointer-events-none absolute inset-3 rounded-xl border border-white/25" />
       <div className="pointer-events-none absolute inset-x-3 top-1/2 h-px bg-white/25" />
       <div className="pointer-events-none absolute left-1/2 top-1/2 size-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/25" />
 
-      <div className="relative flex flex-col-reverse gap-4 py-2">
-        {ROWS.map(({ position, slots }) => {
-          const players = byPosition[position] ?? [];
+      {showFormationLabel && (
+        <span className="absolute right-4 top-4 z-10 rounded-full border border-white/20 bg-slate-900/70 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-100 backdrop-blur">
+          {formationSummary(currentFormation)}
+        </span>
+      )}
+
+      <div className="relative h-[440px] w-full sm:h-[500px]">
+        {cells.map((cell, i) => {
+          const { slot, player } = cell;
+          const p = player;
           return (
-            <div key={position} className="flex flex-col items-center gap-1.5">
-              <div className="flex items-center justify-center gap-4 sm:gap-8">
-                {Array.from({ length: slots }).map((_, i) => {
-                  const p = players[i];
-                  if (!p) {
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => onSlotClick?.(position)}
-                        className={onSlotClick ? "cursor-pointer transition-transform hover:scale-105" : "cursor-default"}
-                        aria-label={`Empty ${position} slot`}
-                      >
-                        <EmptySlot label={emptyLabel} />
-                      </button>
-                    );
+            <div
+              key={p ? p.playerId : `empty-${slot.position}-${i}`}
+              className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+              style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+            >
+              {!p ? (
+                <button
+                  onClick={() => onSlotClick?.(slot.position)}
+                  className={
+                    onSlotClick
+                      ? "cursor-pointer transition-transform hover:scale-105"
+                      : "cursor-default"
                   }
-                  return (
-                    <div key={p.playerId} className="flex flex-col items-center gap-1">
-                      <div className="relative">
-                        <PlayerBadge player={p} size={64} />
-                        {p.isPotm && (
-                          <span
-                            className="absolute -right-1 -top-1 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"
-                            title="Player of the Match"
-                          >
-                            ★
-                          </span>
-                        )}
-                      </div>
-                      <span className="max-w-24 truncate text-xs font-semibold text-white drop-shadow">
-                        {p.name}
+                  aria-label={`Empty ${slot.position} slot`}
+                >
+                  <EmptySlot label={emptyLabel} />
+                </button>
+              ) : (
+                <>
+                  <div className="relative">
+                    <PlayerBadge player={p} size={60} />
+                    {p.isPotm && (
+                      <span
+                        className="absolute -right-1 -top-1 rounded-full bg-amber-400 px-1 text-[9px] font-black text-amber-950 shadow"
+                        title="Player of the Match"
+                      >
+                        ★
                       </span>
-                      <div className="flex items-center gap-1">
-                        <HouseDot house={p.house} />
-                        {p.rating != null && <RatingBadge rating={p.rating} />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    )}
+                  </div>
+                  <span className="max-w-20 truncate text-xs font-semibold text-white drop-shadow sm:max-w-24">
+                    {p.name}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <HouseDot house={p.house} />
+                    {p.rating != null && <RatingBadge rating={p.rating} />}
+                    {showStatus && <StatusBadge status={p.statusLabel} dot short />}
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
