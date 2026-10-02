@@ -75,6 +75,9 @@ export default function SquadBuilder() {
   const config = useQuery(api.config.getConfig);
   const mostPickedResult = useQuery(api.squads.getMostPickedPlayer);
   const saveSquad = useMutation(api.squads.saveSquad);
+  // Over-budget auto-repair: clears an illegal (>$70m) stored squad after the
+  // server re-verifies it — see clearMyOverBudgetSquad.
+  const clearOverBudgetSquad = useMutation(api.squads.clearMyOverBudgetSquad);
 
   // Ownership aggregation — defaults while loading / at 0 squads: every
   // player shows "Picked by 0 managers (0%)" instead of NaN or undefined.
@@ -124,6 +127,10 @@ export default function SquadBuilder() {
       .map((r) => [r.playerId as string, r]),
   );
   const [requestFor, setRequestFor] = useState<PlayerRow | null>(null);
+  // Budget-reset state: sticky for the session so the guidance banner and the
+  // repair path survive the auto-clear (which empties the stored squad).
+  const [budgetResetMode, setBudgetResetMode] = useState(false);
+  const [clearAttempted, setClearAttempted] = useState(false);
   const [reqPrice, setReqPrice] = useState("");
   const [reqReason, setReqReason] = useState("");
   const [reqBusy, setReqBusy] = useState(false);
@@ -156,11 +163,32 @@ export default function SquadBuilder() {
   const { editableSquads } = useAdminConfig();
   const readOnly = (() => {
     try {
+      // Repair mode: a manager whose squad was reset for exceeding the $70m
+      // budget MUST be able to rebuild even while transfers are locked. The
+      // server allows exactly this path (an over-budget stored squad bypasses
+      // the deadline gate, and once cleared the next save is a fresh draft).
+      if (budgetResetMode) return false;
       return gwStatus?.lockReason != null || editableSquads === false;
     } catch {
       return false; // fail-open: never soft-lock the builder on a query error
     }
   })();
+
+  // Flag + auto-clear an over-budget squad exactly once per session. The
+  // mutation re-verifies server-side before deleting, so this can never wipe
+  // a legal squad, and a failed call is non-fatal (admin sweep / next save
+  // still recover the account).
+  useEffect(() => {
+    if (mySquad?.overBudgetReset === true) {
+      setBudgetResetMode(true);
+      if (!clearAttempted) {
+        setClearAttempted(true);
+        clearOverBudgetSquad({}).catch(() => {
+          // non-fatal — sanitized reads keep the UI correct meanwhile
+        });
+      }
+    }
+  }, [mySquad?.overBudgetReset, clearAttempted, clearOverBudgetSquad]);
 
   const handleToggleChip = async () => {
     setChipBusy(true);
@@ -348,7 +376,10 @@ export default function SquadBuilder() {
     try {
       await saveSquad({ playerIds: selected, captainId });
       toast.success("Squad saved! Good luck, manager.");
+      // Legal squad saved — the budget-reset guidance has done its job.
+      setBudgetResetMode(false);
     } catch (err) {
+      // Server errors already arrive as friendly human-readable messages.
       toast.error(err instanceof Error ? err.message : "Could not save squad.");
     } finally {
       setSaving(false);
@@ -449,6 +480,26 @@ export default function SquadBuilder() {
               </Button>
             </div>
           </div>
+
+          {/* Budget-reset guidance: shown when the stored squad was reset for
+              exceeding the $70m cap (flag from the server, sticky for the
+              session until a legal squad is saved again). */}
+          {budgetResetMode && (
+            <div
+              role="alert"
+              className="flex items-start gap-3 rounded-xl border border-amber-400/50 bg-amber-400/10 p-4 text-amber-100"
+            >
+              <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-300" />
+              <div>
+                <p className="text-sm font-bold">
+                  Your team exceeded the {formatMoney(budget)} budget limit and has been reset.
+                </p>
+                <p className="mt-0.5 text-xs text-amber-200/85">
+                  Please re-select your 7 players within {formatMoney(budget)}.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Budget + formation status */}
           <div className="grid gap-4 lg:grid-cols-4">

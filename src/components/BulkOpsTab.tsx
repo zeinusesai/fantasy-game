@@ -78,6 +78,9 @@ export function BulkOpsTab() {
   const lockAllTransfers = useMutation(api.adminControl.lockAllTransfers);
   const distributeGwBonus = useMutation(api.adminControl.distributeGwBonus);
   const triggerAutoSubs = useMutation(api.adminControl.triggerAutoSubs);
+  // Squad budget enforcement (server re-verifies every squad before deleting).
+  const resetOverBudgetSquads = useMutation(api.squads.resetOverBudgetSquads);
+  const resetAllSquads = useMutation(api.squads.resetAllSquads);
   const listAllWagers = useQuery(api.adminControl.listAllWagers);
   const cancelWager = useMutation(api.adminControl.cancelWager);
   const listAllPredictions = useQuery(api.adminControl.listAllPredictions);
@@ -86,6 +89,8 @@ export function BulkOpsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetConfirm, setResetConfirm] = useState("");
+  const [squadResetOpen, setSquadResetOpen] = useState(false);
+  const [squadResetConfirm, setSquadResetConfirm] = useState("");
   const [bonusPoints, setBonusPoints] = useState("");
   const [bonusReason, setBonusReason] = useState("");
 
@@ -121,6 +126,41 @@ export function BulkOpsTab() {
       setResetConfirm("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not reset the points.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Targeted sweep: only squads whose stored player prices exceed the $70m
+  // budget cap (or a lower per-manager override) are reset — legal teams are
+  // untouched. The server publishes the 🚨 activity alert when it resets any.
+  const runOverBudgetSweep = async () => {
+    setBusy("over-budget");
+    try {
+      const res = await resetOverBudgetSquads({});
+      if ((res?.reset ?? 0) > 0) {
+        toast.success(
+          `Reset ${res?.reset} over-budget team(s) of ${res?.examined} examined — 🚨 alert posted to the activity feed.`,
+        );
+      } else {
+        toast.success(`Sweep complete — all ${res?.examined ?? 0} squad(s) are within budget.`);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not run the sweep.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doResetAllSquads = async () => {
+    setBusy("reset-squads");
+    try {
+      const res = await resetAllSquads({ confirm: true });
+      toast.success(`Deleted ${res?.deleted ?? 0} squad(s) — every manager can re-draft.`);
+      setSquadResetOpen(false);
+      setSquadResetConfirm("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not reset the squads.");
     } finally {
       setBusy(null);
     }
@@ -279,6 +319,47 @@ export function BulkOpsTab() {
                 <Wrench className="size-4" />
               )}
               Run auto-subs
+            </Button>
+          </div>
+
+          <div className="grid gap-2 rounded-xl border border-border/60 bg-background/50 p-3">
+            <p className="text-sm font-semibold">Reset over-budget teams (&gt; $70m)</p>
+            <p className="text-muted-foreground text-xs">
+              Re-prices every squad from the live player list and resets ONLY the teams above the
+              $70m cap (or a lower per-manager override). Legal teams are untouched, and a 🚨
+              System Alert is posted to the activity feed when anything is reset.
+            </p>
+            <Button
+              variant="outline"
+              onClick={runOverBudgetSweep}
+              disabled={busy === "over-budget"}
+            >
+              {busy === "over-budget" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <AlertTriangle className="size-4" />
+              )}
+              Reset Over-Budget Teams (&gt; $70m)
+            </Button>
+          </div>
+
+          <div className="grid gap-2 rounded-xl border border-border/60 bg-background/50 p-3">
+            <p className="text-sm font-semibold">Reset ALL squads</p>
+            <p className="text-muted-foreground text-xs">
+              Deletes every fantasy squad so the whole pool re-drafts from scratch. Points are left
+              alone — pair with Reset All Points for a full tournament wipe.
+            </p>
+            <Button
+              variant="destructive"
+              onClick={() => setSquadResetOpen(true)}
+              disabled={busy === "reset-squads"}
+            >
+              {busy === "reset-squads" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="size-4" />
+              )}
+              Reset ALL Squads
             </Button>
           </div>
 
@@ -478,6 +559,47 @@ export function BulkOpsTab() {
           )}
         </CardContent>
       </Card>
+
+      {/* ── Reset ALL squads confirmation ── */}
+      <Dialog open={squadResetOpen} onOpenChange={(open) => !open && setSquadResetOpen(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="size-4" /> Reset ALL squads?
+            </DialogTitle>
+            <DialogDescription>
+              This deletes every manager's fantasy squad — everyone re-drafts from scratch. Points
+              and match scores are kept (use Reset All Points to wipe those too).
+              <p className="mt-3 font-semibold">
+                Type <span className="text-destructive">RESET</span> to confirm.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={squadResetConfirm}
+            onChange={(e) => setSquadResetConfirm(e.target.value)}
+            placeholder="RESET"
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSquadResetOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={doResetAllSquads}
+              disabled={busy === "reset-squads" || squadResetConfirm.trim().toUpperCase() !== "RESET"}
+            >
+              {busy === "reset-squads" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="size-4" />
+              )}
+              Delete every squad
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Reset confirmation ── */}
       <Dialog open={resetOpen} onOpenChange={(open) => !open && setResetOpen(false)}>

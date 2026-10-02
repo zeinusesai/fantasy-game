@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireUser, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
-import { formatMoney, safeBudget, toSafeAmount, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
+import { requireUser, requireSuperAdmin, getPlatformConfig, getSquadForUser, getLeaderboardRows } from "./lib";
+import { formatMoney, safeBudget, toSafeAmount, FIXED_MANAGER_BUDGET, CHIP_GW1, CHIP_GW2, GW_STAGES } from "./configDefaults";
 import { transferLockReason } from "./gameweekStructure";
 import { getSettingsRow, normalizeSettings, resolveManagerBudget } from "./adminConfig";
 import { stageValidator } from "./schema";
@@ -18,6 +18,67 @@ const REQUIRED_FORMATION: Record<string, number> = {
 
 export type SquadPlayer = Doc<"players">;
 
+// ── Budget enforcement helpers (shared by reads, saves and resets) ────────
+
+/**
+ * Sum of player prices. Strict numeric parsing per price (toSafeAmount) means
+ * a malformed / NaN price contributes 0 instead of poisoning the sum, and the
+ * final total is re-asserted finite — an over-budget squad can never slip
+ * through because of corrupt data.
+ */
+function squadCostFromPlayers(players: Array<SquadPlayer | null | undefined>): number {
+  let total = 0;
+  for (const p of players) total += toSafeAmount(p?.price);
+  return Number.isFinite(total) ? total : 0;
+}
+
+/** Safe per-player lookups — one bad id can never reject the whole batch. */
+async function loadSquadPlayers(ctx: QueryCtx | MutationCtx, squad: Doc<"squads">) {
+  const players: Array<SquadPlayer | null> = [];
+  for (const id of squad.playerIds ?? []) {
+    try {
+      players.push(await ctx.db.get(id));
+    } catch {
+      players.push(null);
+    }
+  }
+  return players;
+}
+
+/**
+ * The manager's effective spend cap: the fixed $70m platform budget unless
+ * the Super Admin set a (capped, lower-only) per-manager override. Falls back
+ * to the platform constant if settings can't be read, so a config problem can
+ * never disable enforcement.
+ */
+async function effectiveBudgetFor(ctx: QueryCtx | MutationCtx, userId: string): Promise<number> {
+  try {
+    const settings = normalizeSettings(await getSettingsRow(ctx));
+    return safeBudget(
+      resolveManagerBudget(settings, userId),
+      settings.marketRules.defaultBudget,
+    );
+  } catch {
+    return FIXED_MANAGER_BUDGET;
+  }
+}
+
+/**
+ * True when the STORED squad costs more than its owner's effective budget.
+ * Used by read paths (flag + sanitize) and by saveSquad's repair gate.
+ * Fails open (false) so an infra hiccup never hides or nukes a legal squad.
+ */
+async function isSquadOverBudget(ctx: QueryCtx | MutationCtx, squad: Doc<"squads">): Promise<boolean> {
+  try {
+    const players = await loadSquadPlayers(ctx, squad);
+    const cost = squadCostFromPlayers(players);
+    const budget = await effectiveBudgetFor(ctx, String(squad.userId));
+    return cost > budget;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns the signed-in user's squad, or `null` when there isn't one.
  * Never throws: not-signed-in (including the brief auth-attachment race on
@@ -27,20 +88,46 @@ export type SquadPlayer = Doc<"players">;
 export const getMySquad = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (userId === null) return null; // not signed in (yet)
-    const user = await ctx.db.get(userId);
-    if (!user) return null; // account no longer exists
-    const squad = await getSquadForUser(ctx, userId);
-    if (!squad) return null; // no squad built yet (e.g. admins)
-    const players = await Promise.all(squad.playerIds.map((id) => ctx.db.get(id)));
-    const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
-    return {
-      squadId: squad._id,
-      totalSpent: toSafeAmount(squad.totalSpent),
-      players: players.filter(Boolean) as SquadPlayer[],
-      captainId: captain ? squad.captainId : null,
-    };
+    try {
+      const userId = await getAuthUserId(ctx);
+      if (userId === null) return null; // not signed in (yet)
+      const user = await ctx.db.get(userId);
+      if (!user) return null; // account no longer exists
+      const squad = await getSquadForUser(ctx, userId);
+      if (!squad) return null; // no squad built yet (e.g. admins)
+      const players = (await Promise.all(squad.playerIds.map((id) => ctx.db.get(id)))).filter(
+        Boolean,
+      ) as SquadPlayer[];
+      const captain = squad.captainId ? await ctx.db.get(squad.captainId) : null;
+
+      // On-load sanitization: a squad costing more than the manager's
+      // effective budget ($70m unless the Super Admin lowered it) is illegal.
+      // Serve it EMPTY + flagged so every view shows a clean builder, and the
+      // Squad Builder can auto-clear the stored row (see clearMyOverBudgetSquad).
+      const totalSpent = squadCostFromPlayers(players);
+      const budget = await effectiveBudgetFor(ctx, String(userId));
+      if (totalSpent > budget) {
+        return {
+          squadId: squad._id,
+          totalSpent: 0,
+          players: [] as SquadPlayer[],
+          captainId: null,
+          budget,
+          overBudgetReset: true,
+        };
+      }
+      return {
+        squadId: squad._id,
+        totalSpent,
+        players,
+        captainId: captain ? squad.captainId : null,
+        budget,
+        overBudgetReset: false,
+      };
+    } catch {
+      // Never bubble a storage hiccup into a rejected query.
+      return null;
+    }
   },
 });
 
@@ -154,6 +241,32 @@ export const getSquadByUserId = query({
       const settings = normalizeSettings(await getSettingsRow(ctx));
       const effectiveBudget = resolveManagerBudget(settings, String(userId));
 
+      // On-load sanitization: an over-budget stored squad is illegal — serve
+      // it empty + flagged so the rival inspector renders a clean builder and
+      // the owner is pushed to re-draft within budget.
+      if (squadCostFromPlayers(players) > effectiveBudget) {
+        return {
+          squadId: squad._id,
+          userId: user._id,
+          username: user.username ?? "?",
+          teamName: user.teamName ?? "Unnamed team",
+          avatar: user.image ?? null,
+          players: [],
+          captainId: null,
+          captainName: null,
+          totalSpent: 0,
+          effectiveBudget,
+          remainingBudget: effectiveBudget,
+          totalPoints: mine?.total ?? 0,
+          lastMatchPoints: mine?.lastMatch ?? 0,
+          rank,
+          managerCount: rows.length,
+          customBadge: user.customBadge ?? null,
+          role: user.role ?? null,
+          overBudgetReset: true,
+        };
+      }
+
       return {
         squadId: squad._id,
         userId: user._id,
@@ -172,6 +285,7 @@ export const getSquadByUserId = query({
         managerCount: rows.length,
         customBadge: user.customBadge ?? null,
         role: user.role ?? null,
+        overBudgetReset: false,
       };
     } catch {
       return null;
@@ -243,25 +357,59 @@ export const saveSquad = mutation({
     playerIds: v.array(v.id("players")),
     captainId: v.id("players"),
   },
-  handler: async (ctx, { playerIds, captainId }) => {
-    const user = await requireUser(ctx);
-    const { budget, houseLimit } = await getPlatformConfig(ctx);
+  handler: async (ctx, args) => {
+    // Outer catch-all: ANY unexpected failure (db hiccup, feed write, stale
+    // client payload) surfaces as a friendly message for the client toast
+    // instead of a raw Convex server exception. Known validation Errors
+    // rethrow untouched so their specific guidance survives.
+    try {
+      return await saveSquadInner(ctx, args);
+    } catch (err) {
+      if (err instanceof Error && !err.message.startsWith("Uncaught")) throw err;
+      throw new Error("Could not save your squad — please refresh the page and try again.");
+    }
+  },
+});
 
-    if (playerIds.length !== 7) {
-      throw new Error(`Pick exactly 7 players (currently ${playerIds.length}).`);
-    }
-    if (new Set(playerIds).size !== playerIds.length) {
-      throw new Error("You cannot pick the same player twice.");
-    }
-    const captainInSquad = playerIds.includes(captainId);
-    if (!captainInSquad) {
-      throw new Error("Your captain must be one of your 7 starters.");
-    }
+/** Body of saveSquad, split out so the wrapper can add the friendly catch. */
+async function saveSquadInner(
+  ctx: MutationCtx,
+  args: { playerIds: Array<Id<"players">>; captainId: Id<"players"> },
+): Promise<Id<"squads">> {
+  const user = await requireUser(ctx);
+  const { houseLimit } = await getPlatformConfig(ctx);
 
-    const players = await Promise.all(playerIds.map((id) => ctx.db.get(id)));
-    if (players.some((p) => !p || !p.active)) {
-      throw new Error("One of your selected players no longer exists.");
-    }
+  // Defensive input normalization: the arg validator already guarantees
+  // strings, but a stale/cached client could still send null/undefined/junk
+  // entries — drop them so the payload degrades to a clean validation error
+  // ("pick exactly 7") instead of an unhandled server exception.
+  const playerIds = (Array.isArray(args.playerIds) ? args.playerIds : []).filter(
+    (id): id is Id<"players"> => typeof id === "string" && id.trim().length > 0,
+  );
+  const captainId =
+    typeof args.captainId === "string" && args.captainId.trim().length > 0
+      ? args.captainId
+      : null;
+
+  if (playerIds.length !== 7) {
+    throw new Error(`Pick exactly 7 players (currently ${playerIds.length}).`);
+  }
+  if (new Set(playerIds).size !== playerIds.length) {
+    throw new Error("You cannot pick the same player twice.");
+  }
+  if (captainId === null || !playerIds.includes(captainId)) {
+    throw new Error("Your captain must be one of your 7 starters.");
+  }
+
+  // Safe record fetching: a well-formed id can still point at a player that
+  // was deleted or deactivated after the client loaded its roster. A failed
+  // lookup degrades to null and is caught by the existence check below.
+  const players = await Promise.all(playerIds.map((id) => ctx.db.get(id).catch(() => null)));
+  if (players.some((p) => !p || !p.active)) {
+    throw new Error(
+      "One or more selected players could not be found. Refresh the player list and try again.",
+    );
+  }
 
     // Formation: 1 GK / 2 DEF / 2 MID / 2 FWD
     const counts: Record<string, number> = { GK: 0, DEF: 0, MID: 0, FWD: 0 };
@@ -296,19 +444,22 @@ export const saveSquad = mutation({
     // becomes 0 rather than poisoning the sum (NaN > x is always false, which
     // would otherwise let a corrupt squad slip past the cap).
     const totalSpent = players.reduce((sum, p) => sum + toSafeAmount(p?.price), 0);
+    // The budget is the fixed $70m platform default unless the Super Admin
+    // set a per-manager override. resolveManagerBudget always caps at the
+    // platform budget, so an override can only ever LOWER it — and
+    // safeBudget re-asserts that the result is finite and non-negative.
+    const settings = normalizeSettings(await getSettingsRow(ctx));
+    const myBudget = safeBudget(
+      resolveManagerBudget(settings, String(user._id)),
+      settings.marketRules.defaultBudget,
+    );
     try {
       if (!Number.isFinite(totalSpent)) {
         throw new Error("Squad value could not be calculated — please refresh and try again.");
       }
-      // The budget is the fixed $70m platform default unless the Super Admin
-      // set a per-manager override. resolveManagerBudget always caps at the
-      // platform budget, so an override can only ever LOWER it — and
-      // safeBudget re-asserts that the result is finite and non-negative.
-      const settings = normalizeSettings(await getSettingsRow(ctx));
-      const myBudget = safeBudget(
-        resolveManagerBudget(settings, String(user._id)),
-        settings.marketRules.defaultBudget,
-      );
+      // Strict server-side $70m verification — the client check is cosmetic;
+      // this is the one that counts. The Super Admin's only override path is
+      // the separate forceSaveSquad mutation, never this one.
       if (totalSpent > myBudget) {
         throw new Error(
           `Squad exceeds your budget: ${formatMoney(totalSpent)} spent of ${formatMoney(myBudget)}.`,
@@ -337,11 +488,15 @@ export const saveSquad = mutation({
       // First-time saves stay allowed so a manager joining late can still
       // field a team.
       const change = existing.playerIds.map(String).join(",") !== playerIds.map(String).join(",");
-      if (change) {
+      // Repair path: if the STORED squad is itself over budget (e.g. the
+      // Super Admin repriced a player after it was saved), always allow the
+      // rebuild — deadline locks must never trap a manager with an illegal
+      // squad they are required to fix.
+      const storedIllegal = await isSquadOverBudget(ctx, existing);
+      if (change && !storedIllegal) {
         // Master switch: the Super Admin can lock the Squad Builder for
         // everyone, independent of any gameweek deadline.
-        const settingsForLock = normalizeSettings(await getSettingsRow(ctx));
-        if (settingsForLock.editableSquads === false) {
+        if (settings.editableSquads === false) {
           throw new Error("The Super Admin has locked the squad builder platform-wide.");
         }
         const gwRows = await ctx.db.query("gameweeks").collect();
@@ -404,8 +559,7 @@ export const saveSquad = mutation({
       // feed failure is non-fatal
     }
     return newId;
-  },
-});
+}
 
 /**
  * The signed-in manager's chip status (armed chip, used flag) — null-safe.
@@ -427,6 +581,140 @@ export const getMyChip = query({
       };
     } catch {
       return { chip: null, used: false, available: false };
+    }
+  },
+});
+
+// ── Over-budget enforcement & resets ─────────────────────────────────────
+
+/**
+ * Auto-repair: deletes the signed-in manager's squad when the STORED squad
+ * costs more than their effective budget ($70m unless the Super Admin set a
+ * lower per-manager override). The Squad Builder calls this once when a read
+ * path flags the squad as over budget. The server re-verifies before
+ * deleting, so this mutation can never clear a legal squad — and a missing
+ * or already-clean squad is a silent no-op, never an error.
+ */
+export const clearMyOverBudgetSquad = mutation({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const user = await requireUser(ctx);
+      const squad = await getSquadForUser(ctx, user._id);
+      if (!squad) return { cleared: false };
+      const cost = squadCostFromPlayers(await loadSquadPlayers(ctx, squad));
+      const budget = await effectiveBudgetFor(ctx, String(user._id));
+      if (cost <= budget) return { cleared: false }; // legal squad — never touch it
+      await ctx.db.delete(squad._id);
+      return { cleared: true };
+    } catch {
+      // Never bubble a repair failure into a UI crash; the admin sweep and
+      // the next save attempt still recover the account.
+      return { cleared: false };
+    }
+  },
+});
+
+/**
+ * Super Admin sweep: deletes ONLY the squads whose stored player prices
+ * exceed their owner's effective budget ($70m cap unless a lower per-manager
+ * override exists). Legal $70m teams are untouched. Publishes one community
+ * activity alert when anything was reset, and writes an audit entry.
+ */
+export const resetOverBudgetSquads = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireSuperAdmin(ctx);
+    const resetTeams: string[] = [];
+    let examined = 0;
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      for (const squad of squads) {
+        examined += 1;
+        try {
+          const cost = squadCostFromPlayers(await loadSquadPlayers(ctx, squad));
+          const budget = await effectiveBudgetFor(ctx, String(squad.userId));
+          if (cost <= budget) continue; // valid team — do not affect it
+          await ctx.db.delete(squad._id);
+          const owner = await ctx.db.get(squad.userId);
+          resetTeams.push(owner?.username ?? "unknown");
+        } catch {
+          continue; // one bad row never aborts the sweep
+        }
+      }
+
+      if (resetTeams.length > 0) {
+        try {
+          await ctx.runMutation(internal.activity.logActivity, {
+            type: "system",
+            text: "🚨 System Alert: Squads exceeding the $70m budget cap have been automatically reset. Please check and rebuild your team!",
+          });
+        } catch {
+          // feed failure is non-fatal
+        }
+      }
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "reset_over_budget_squads",
+          category: "squad",
+          detail: `Examined ${examined} squad(s); reset ${resetTeams.length}${
+            resetTeams.length > 0 ? `: ${resetTeams.slice(0, 20).join(", ")}` : ""
+          }`,
+        });
+      } catch {
+        // audit failure is non-fatal
+      }
+      return { reset: resetTeams.length, examined, teams: resetTeams.slice(0, 50) };
+    } catch {
+      throw new Error("Could not run the over-budget sweep — please try again.");
+    }
+  },
+});
+
+/**
+ * Super Admin full reset: deletes EVERY fantasy squad so the whole pool
+ * re-drafts from scratch. Requires an explicit confirm flag; publishes a
+ * community activity alert and an audit entry. Points/scores are managed by
+ * the separate Reset All Points tool and are intentionally left alone.
+ */
+export const resetAllSquads = mutation({
+  args: { confirm: v.optional(v.boolean()) },
+  handler: async (ctx, { confirm }) => {
+    await requireSuperAdmin(ctx);
+    if (confirm !== true) {
+      throw new Error("Reset All Squads requires confirmation.");
+    }
+    let deleted = 0;
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      for (const squad of squads) {
+        try {
+          await ctx.db.delete(squad._id);
+          deleted += 1;
+        } catch {
+          continue; // one bad row never aborts the reset
+        }
+      }
+      try {
+        await ctx.runMutation(internal.activity.logActivity, {
+          type: "system",
+          text: "🧹 All fantasy squads have been reset by the Super Admin — please draft your starting 7 again!",
+        });
+      } catch {
+        // feed failure is non-fatal
+      }
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "reset_all_squads",
+          category: "squad",
+          detail: `Deleted ${deleted} squad(s)`,
+        });
+      } catch {
+        // audit failure is non-fatal
+      }
+      return { deleted };
+    } catch {
+      throw new Error("Could not reset the squads — please try again.");
     }
   },
 });
