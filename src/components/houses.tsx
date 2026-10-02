@@ -89,7 +89,21 @@ export function HouseCrest({
   const color = useHouseColor();
   const brandColor = color(house);
   const label = houseName(house);
-  const custom = logos[house];
+  // ── FALLBACK LOGO RESOLUTION ──
+  // A custom crest is used only when it is a non-empty string. Anything else —
+  // missing key, null, undefined, whitespace-only, a stale storage URL — falls
+  // through to the themed initials crest rendered below.
+  //
+  // NOTE: there is deliberately NO `"/default-house-crest.png"` src. That asset
+  // does not exist in `public/`, so pointing an <img> at it would render a
+  // broken-image glyph — the exact failure this fallback exists to prevent.
+  // The themed initials crest is the default, needs no binary asset, and is
+  // guaranteed to render.
+  const customRaw = logos?.[house];
+  const custom =
+    typeof customRaw === "string" && customRaw.trim() !== ""
+      ? customRaw.trim()
+      : null;
   // Admin-supplied crest URLs can 404 or be deleted at any time. Remembering the
   // failed URL (rather than a boolean) means a *new* logo is retried as soon as
   // it is saved, and a broken one swaps cleanly to the themed placeholder

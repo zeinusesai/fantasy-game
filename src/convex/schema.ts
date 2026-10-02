@@ -218,7 +218,15 @@ const schema = defineSchema(
     // ===== House logos (custom, super admin only) =====
     houseLogos: defineTable({
       house: houseValidator,
-      logoUrl: v.string(), // data URL or link
+      // Convex STORAGE ID of the uploaded crest (the normal path). Kept short
+      // on purpose — see MAX_DATA_URL_CHARS in convex/houses.ts: a Convex
+      // document is capped at 1 MiB, so a base64 data URL pasted straight in
+      // here is what used to blow up with a raw server error.
+      storageId: v.optional(v.string()),
+      // Only used for a LEGACY data-URL row or an external CDN link. Always
+      // bounded by MAX_DATA_URL_CHARS / a http(s) allowlist before it is
+      // written, so this field can never exceed the document limit.
+      logoUrl: v.optional(v.string()),
       updatedAt: v.number(),
     }).index("by_house", ["house"]),
 

@@ -1814,9 +1814,15 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
   const FIXED_BUDGET = 70_000_000;
   const setHouseLimit = useMutation(api.config.setHouseLimit);
   const setHouseLogo = useMutation(api.houses.setHouseLogo);
+  const clearHouseLogo = useMutation(api.houses.clearHouseLogo);
+  const generateLogoUploadUrl = useMutation(api.houses.generateLogoUploadUrl);
+  const MAX_LOGO_BYTES = 2_000_000;
 
   const [houseLimit, setHouseLimitLocal] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Which house is mid-upload. Non-null disables that slot's button so a
+  // double click can't fire two concurrent mutations.
+  const [logoBusy, setLogoBusy] = useState<House | null>(null);
 
   const handleHouseLimit = async (limit: number) => {
     setBusy(true);
@@ -1831,29 +1837,77 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
     }
   };
 
+  /**
+   * Upload a house crest.
+   *
+   * The file goes straight to Convex FILE STORAGE (via a one-time upload URL)
+   * and only the short storage ID is sent to `setHouseLogo`. This is the whole
+   * point of the fix: a base64 data URL used to be written into the database
+   * row, which cannot fit in a 1 MiB Convex document and crashed the server
+   * with an opaque error.
+   *
+   * Every step is guarded, `logoBusy` disables the slot so a double click
+   * can't fire two mutations, and failures surface as a clean toast.
+   */
   const uploadLogo = (house: House) => {
+    if (logoBusy !== null) return; // a mutation is already in flight
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      if (file.size > 1_400_000) {
-        toast.error("Image too large — please use an image under ~1.4MB.");
+      // Client-side guard so an oversized file never costs a round trip.
+      if (file.size > MAX_LOGO_BYTES) {
+        toast.error("Image too large — please use an image under 2 MB.");
         return;
       }
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          await setHouseLogo({ house, logoUrl: String(reader.result) });
-          toast.success(`${house} logo updated.`);
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Could not save logo.");
+      setLogoBusy(house);
+      try {
+        const { url } = await generateLogoUploadUrl({ fileType: file.type });
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        if (!res.ok) {
+          throw new Error("The image upload did not complete — please retry.");
         }
-      };
-      reader.readAsDataURL(file);
+        const { storageId } = (await res.json()) as { storageId?: unknown };
+        const id = typeof storageId === "string" ? storageId.trim() : "";
+        if (!id) {
+          throw new Error("The upload did not return a file reference.");
+        }
+        // Only the storage ID travels through the mutation — never the bytes.
+        await setHouseLogo({ house, storageId: id });
+        toast.success(`${house} logo updated successfully!`);
+      } catch (error) {
+        console.error("Failed to set house logo:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to update house logo",
+        );
+      } finally {
+        setLogoBusy(null);
+      }
     };
     input.click();
+  };
+
+  /** Revert a house to its themed default crest. */
+  const removeLogo = async (house: House) => {
+    if (logoBusy !== null) return;
+    setLogoBusy(house);
+    try {
+      await clearHouseLogo({ house });
+      toast.success(`${house} reset to its default crest.`);
+    } catch (error) {
+      console.error("Failed to clear house logo:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update house logo",
+      );
+    } finally {
+      setLogoBusy(null);
+    }
   };
 
   return (
@@ -1930,12 +1984,22 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
             House logos
           </CardTitle>
           <CardDescription>
-            Upload custom crests — shown across the bracket, match center and leaderboards.
+            Upload custom crests — shown across the bracket, match center and
+            leaderboards. Images are stored in Convex file storage (max 2 MB), so
+            a large crest can't overload the database. Remove one to fall back
+            to the themed default crest.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3">
           {HOUSES.map((house) => (
-            <HouseLogoSlot key={house} house={house} onUpload={() => uploadLogo(house)} />
+            <HouseLogoSlot
+              key={house}
+              house={house}
+              onUpload={() => uploadLogo(house)}
+              onClear={() => void removeLogo(house)}
+              busy={logoBusy === house}
+              disabled={logoBusy !== null && logoBusy !== house}
+            />
           ))}
         </CardContent>
       </Card>
@@ -2909,8 +2973,30 @@ function MaintenanceCard() {
   );
 }
 
-function HouseLogoSlot({ house, onUpload }: { house: House; onUpload: () => void }) {
+/**
+ * One house's crest slot in the Settings tab.
+ *
+ * `HouseCrest` already falls back to the themed initials crest when the URL is
+ * missing, blank or fails to load, so there is no broken-image path here. A
+ * `Clear` action is only offered once a custom crest exists.
+ */
+function HouseLogoSlot({
+  house,
+  onUpload,
+  onClear,
+  busy,
+  disabled,
+}: {
+  house: House;
+  onUpload: () => void;
+  onClear: () => void;
+  /** This slot has a mutation in flight. */
+  busy: boolean;
+  /** Another slot is busy — keep the layout stable, just block the click. */
+  disabled: boolean;
+}) {
   const logos = useQuery(api.houses.listHouseLogos);
+  // Null-safe: `logos` is undefined while loading and a missing key is null.
   const custom = logos?.[house] ?? null;
   return (
     <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-secondary/40 p-3">
@@ -2921,9 +3007,32 @@ function HouseLogoSlot({ house, onUpload }: { house: House; onUpload: () => void
           {custom ? "Custom logo" : "Default crest"}
         </p>
       </div>
-      <Button size="sm" variant="outline" onClick={onUpload}>
-        <Plus className="size-3.5" />
-      </Button>
+      <div className="flex shrink-0 items-center gap-1">
+        {custom && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onClear}
+            disabled={disabled || busy}
+            title={`Reset ${house} to its default crest`}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onUpload}
+          disabled={disabled || busy}
+          title={custom ? `Replace ${house} crest` : `Upload ${house} crest`}
+        >
+          {busy ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Plus className="size-3.5" />
+          )}
+        </Button>
+      </div>
     </div>
   );
 }
