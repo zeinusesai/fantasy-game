@@ -300,12 +300,12 @@ export function PitchView({
         </span>
       )}
 
-      // Aspect-locked pitch: it scales with the VIEWPORT WIDTH instead of a fixed
-        // pixel height, so all seven slots (plus the bench strip callers render
-        // below it) fit on an iPhone SE through Pro Max with no horizontal
-        // cut-off. `max-h-[62dvh]` keeps a very tall screen from pushing the
-        // fold too far down.
-        <div className="relative z-[1] mx-auto aspect-[3/4] max-h-[62dvh] w-full max-w-[360px] sm:max-w-none">
+      {/* Aspect-locked pitch: it scales with the VIEWPORT WIDTH instead of a
+          fixed pixel height, so all seven slots (plus the bench strip callers
+          render below it) fit on an iPhone SE through Pro Max with no
+          horizontal cut-off. `max-h-[62dvh]` keeps a very tall screen from
+          pushing the fold too far down. */}
+      <div className="relative z-[1] mx-auto aspect-[3/4] max-h-[62dvh] w-full max-w-[360px] sm:max-w-none">
         {cells.map((cell, i) => {
           const { slot, player } = cell;
           const p = player;

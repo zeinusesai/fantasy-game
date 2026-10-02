@@ -251,8 +251,8 @@ export function AppNav({ children }: { children: ReactNode }) {
         )}
       </header>
 
-      // `pb-nav-safe` clears the fixed bottom tab bar + the iOS home indicator so
-        // the last card is never trapped underneath them.
+      {/* `pb-nav-safe` clears the fixed bottom tab bar + the iOS home
+          indicator so the last card is never trapped underneath them. */}
       <main className="mx-auto w-full max-w-7xl px-4 pt-4 pb-4 sm:py-6 pb-nav-safe sm:pb-6">
         {children}
       </main>
