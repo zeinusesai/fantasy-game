@@ -59,6 +59,8 @@ export default function Profile() {
   const [teamName, setTeamName] = useState("");
   const [avatar, setAvatar] = useState<string>("");
   const [favoritePlayerId, setFavoritePlayerId] = useState<string>("");
+  const [instagram, setInstagram] = useState("");
+  const [tiktok, setTiktok] = useState("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -73,6 +75,8 @@ export default function Profile() {
       // Mirror the stored avatar value (preset id OR upload URL).
       setAvatar(user.image ?? "");
       setFavoritePlayerId(user.favoritePlayerId ?? "");
+      setInstagram(user.instagram ?? "");
+      setTiktok(user.tiktok ?? "");
       setLoaded(true);
     }
   }, [user, loaded]);
@@ -83,6 +87,10 @@ export default function Profile() {
       await updateProfile({
         teamName: teamName.trim(),
         favoritePlayerId: favoritePlayerId || undefined,
+        // Sent always (even when blank) so clearing a handle unlinks it
+        // server-side instead of silently keeping the old value.
+        instagram: instagram.trim(),
+        tiktok: tiktok.trim(),
       });
       toast.success("Profile updated.");
     } catch (err) {
@@ -211,7 +219,35 @@ export default function Profile() {
                 </SelectContent>
               </Select>
               <p className="text-muted-foreground text-xs">
-                Shown next to your team on the global leaderboard.
+                Shown next to your team on the global leaderboard, and pinned as
+                your MVP on your public profile card.
+              </p>
+            </div>
+
+            {/* ── Social links (optional, unlinked = field absent) ── */}
+            <div className="grid gap-2">
+              <Label htmlFor="social-instagram">Social links</Label>
+              <Input
+                id="social-instagram"
+                value={instagram}
+                onChange={(e) => setInstagram(e.target.value)}
+                placeholder="Instagram handle (without @)"
+                maxLength={40}
+                autoComplete="off"
+              />
+              <Input
+                id="social-tiktok"
+                value={tiktok}
+                onChange={(e) => setTiktok(e.target.value)}
+                placeholder="TikTok handle (without @)"
+                maxLength={40}
+                autoComplete="off"
+              />
+              <p className="text-muted-foreground text-xs">
+                Optional — leave blank to unlink. Handles are cleaned up
+                automatically (the <code>@</code> is optional and letters, numbers,
+                dots and underscores only). Links open in a new tab on Instagram
+                and TikTok.
               </p>
             </div>
 

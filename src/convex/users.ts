@@ -1,7 +1,10 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { query } from "./_generated/server";
+import { v } from "convex/values";
 import { readUserCosmetics } from "./lib";
-import type { Doc } from "./_generated/dataModel";
+import { getLeaderboardRows } from "./lib";
+import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle } from "./defaults";
+import type { Doc, Id } from "./_generated/dataModel";
 
 /**
  * Get the current signed in user. Returns null if the user is not signed in.
@@ -37,6 +40,162 @@ export const currentUser = query({
         typeof user.extraChips === "number" && Number.isFinite(user.extraChips)
           ? user.extraChips
           : 0,
+      // Social handles — normalised WITHOUT the "@" by updateProfile, and
+      // re-cleaned here so a hand-edited row can never put a scheme or a
+      // script into the public profile card.
+      instagram: cleanSocialHandle(user.instagram),
+      tiktok: cleanSocialHandle(user.tiktok),
     };
+  },
+});
+
+/**
+ * The full public manager profile behind the profile card: identity, social
+ * handles, store cosmetics, achievements (points, rank, favourite house) and
+ * the pinned MVP player.
+ *
+ * Null-safe by contract: returns `null` for a signed-out viewer or a
+ * non-existent manager, and EVERY nested value has a safe fallback, so the
+ * card can render `cosmetics ?? {}` / `socials ?? {}` without a guard on the
+ * client for each individual field.
+ */
+export const getPublicProfile = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    if ((await getAuthUserId(ctx)) === null) return null;
+    try {
+      const user = await ctx.db.get(userId);
+      if (!user) return null;
+
+      const cosmetics = await readUserCosmetics(ctx, user);
+
+      // ── Achievements: points + rank, from the shared leaderboard ──
+      let totalPoints = 0;
+      let rank: number | null = null;
+      let managerCount = 0;
+      try {
+        const rows = await getLeaderboardRows(ctx);
+        managerCount = rows.length;
+        const idx = rows.findIndex((r) => r.userId === userId);
+        if (idx >= 0) {
+          rank = idx + 1;
+          totalPoints = rows[idx]?.total ?? 0;
+        }
+      } catch {
+        // A leaderboard hiccup must never hide a profile.
+      }
+
+      // ── House tilt: the house they draft most often (null until they have
+      //    one squad). Ties resolve in Fire/Earth/Wind/Water order. ──
+      let favouriteHouse: string | null = null;
+      try {
+        const squad = await ctx.db
+          .query("squads")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .unique();
+        const players = squad
+          ? (await Promise.all(squad.playerIds.map((id) => ctx.db.get(id).catch(() => null))))
+          : [];
+        const tally = new Map<string, number>();
+        for (const p of players) {
+          if (!p || typeof p.house !== "string") continue;
+          tally.set(p.house, (tally.get(p.house) ?? 0) + 1);
+        }
+        let best = 0;
+        for (const [house, n] of tally) {
+          if (n > best) {
+            best = n;
+            favouriteHouse = house;
+          }
+        }
+      } catch {
+        favouriteHouse = null;
+      }
+
+      // ── Pinned MVP player. The stored id may point at a deleted player or
+      //    be a malformed string, so it is resolved defensively. ──
+      let favouritePlayer: {
+        playerId: string;
+        name: string;
+        house: string;
+        position: string;
+        image: string | null;
+      } | null = null;
+      const favId = user.favoritePlayerId;
+      if (typeof favId === "string" && favId.length > 0) {
+        try {
+          // The stored value is a plain string (legacy rows predate strict
+          // typing), so it is validated and cast here. A deleted/malformed id
+          // throws here and is caught → favouritePlayer stays null.
+          const p = await ctx.db.get(favId as Id<"players">);
+          if (p && typeof p.name === "string") {
+            favouritePlayer = {
+              playerId: String(p._id),
+              name: p.name,
+              house: String(p.house),
+              position: String(p.position),
+              image: p.image ?? null,
+            };
+          }
+        } catch {
+          favouritePlayer = null;
+        }
+      }
+
+      // ── Cosmetics purchased in the store (the showcase chips). ──
+      let unlockedItems: Array<{ itemId: string; name: string; priceAED: number }> = [];
+      try {
+        const rows = await ctx.db
+          .query("storeEntitlements")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .collect();
+        unlockedItems = rows
+          .filter((r) => r.enabled === true)
+          .map((r) => ({ itemId: r.itemId, name: r.itemId, priceAED: 0 }));
+      } catch {
+        unlockedItems = [];
+      }
+
+      return {
+        userId: user._id,
+        username: user.username ?? "unknown",
+        teamName: user.teamName ?? "Unnamed team",
+        avatar: user.image ?? null,
+        role: user.role ?? null,
+        customBadge: user.customBadge ?? null,
+        badgeMeta: (() => {
+          const id = cleanBadgeId(user.customBadge ?? "");
+          if (!id) return null;
+          const registry = { ...DEFAULT_BADGE_REGISTRY };
+          const meta = registry[id];
+          return meta ? { id, emoji: meta.emoji, label: meta.label } : null;
+        })(),
+        // Social — null when unlinked, never an empty string.
+        instagram: cleanSocialHandle(user.instagram),
+        tiktok: cleanSocialHandle(user.tiktok),
+        // Cosmetics — always fully populated.
+        cosmetics: {
+          activePitchTheme: cosmetics.activePitchTheme,
+          hasGoldenJersey: cosmetics.hasGoldenJersey,
+          hasProfileBorder: cosmetics.hasProfileBorder,
+          hasCustomTitle: cosmetics.hasCustomTitle,
+          customTitle:
+            typeof user.customTitle === "string" && user.customTitle.trim() !== ""
+              ? user.customTitle.trim().slice(0, 24)
+              : null,
+          unlockedItems,
+        },
+        // Achievements — always fully populated.
+        stats: {
+          totalPoints,
+          rank,
+          managerCount,
+          favouriteHouse,
+        },
+        favouritePlayer,
+      };
+    } catch {
+      return null;
+    }
   },
 });

@@ -10,6 +10,8 @@ import {
   getLeaderboardRows,
 } from "./lib";
 
+import { cleanSocialHandle } from "./defaults";
+
 // ── Avatar uploads (Convex file storage) ─────────────────────────────────
 
 // 2MB hard cap — matches the client-side check and protects storage.
@@ -160,8 +162,10 @@ export const updateProfile = mutation({
     teamName: v.string(),
     avatar: v.optional(v.string()),
     favoritePlayerId: v.optional(v.string()),
+    instagram: v.optional(v.string()),
+    tiktok: v.optional(v.string()),
   },
-  handler: async (ctx, { teamName, avatar, favoritePlayerId }) => {
+  handler: async (ctx, { teamName, avatar, favoritePlayerId, instagram, tiktok }) => {
     let user;
     try {
       user = await requireUser(ctx);
@@ -174,12 +178,24 @@ export const updateProfile = mutation({
     if (trimmed.length < 2 || trimmed.length > 40) {
       throw new Error("Team name must be 2-40 characters.");
     }
+
+    // Social handles: sanitised here, and a blank value CLEARS the field
+    // (patching with undefined removes it) so a manager can unlink cleanly.
+    const instagramHandle = instagram !== undefined ? cleanSocialHandle(instagram) : undefined;
+    const tiktokHandle = tiktok !== undefined ? cleanSocialHandle(tiktok) : undefined;
+
     try {
       await ctx.db.patch(user._id, {
         teamName: trimmed,
         ...(avatar !== undefined ? { image: avatar || undefined } : {}),
         ...(favoritePlayerId !== undefined
           ? { favoritePlayerId: favoritePlayerId || undefined }
+          : {}),
+        ...(instagramHandle !== undefined
+          ? { instagram: instagramHandle ?? undefined }
+          : {}),
+        ...(tiktokHandle !== undefined
+          ? { tiktok: tiktokHandle ?? undefined }
           : {}),
       });
     } catch {

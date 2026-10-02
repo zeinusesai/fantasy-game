@@ -108,6 +108,12 @@ const schema = defineSchema(
       // "custom_title" store entitlement; a value here without the
       // entitlement is simply ignored by the UI.
       customTitle: v.optional(v.string()),
+      // Public social handles, stored WITHOUT the leading "@" (normalised by
+      // managers.updateProfile). Both optional and never rendered as anything
+      // other than a handle — the client builds the URL from a fixed host, so
+      // a stored value can never become an arbitrary link.
+      instagram: v.optional(v.string()),
+      tiktok: v.optional(v.string()),
       // Extra single-use "Double Down" chips bought in the store (on top of
       // the free tournament chip). Always clamped to >= 0 server-side.
       extraChips: v.optional(v.number()),
@@ -371,6 +377,23 @@ const schema = defineSchema(
       .index("by_status", ["status"])
       .index("by_user", ["userId"])
       .index("by_user_item", ["userId", "itemId"]),
+
+    // ===== In-app direct messages between managers =====
+// One row per message. Threads are derived by querying both directions
+    // (sender→recipient and recipient→sender), so there is no separate
+    // conversation row to keep in sync.
+    directMessages: defineTable({
+      senderId: v.id("users"),
+      recipientId: v.id("users"),
+      // Trimmed and length-capped server-side (max 1000) — plain text only.
+      text: v.string(),
+      isRead: v.optional(v.boolean()), // absent == unread
+      createdAt: v.number(), // epoch ms
+    })
+      .index("by_recipient", ["recipientId"])
+      .index("by_sender", ["senderId"])
+      .index("by_recipient_read", ["recipientId", "isRead"])
+      .index("by_pair", ["senderId", "recipientId"]),
 
     // ===== Granted store perks, one row per user + item =====
 // The single source of truth for "does this manager own this perk, and is it

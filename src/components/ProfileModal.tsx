@@ -3,6 +3,7 @@ import { api } from "@/convex/_generated/api";
 import { PitchView, type PitchPlayer } from "@/components/PitchView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,10 +12,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatMoney } from "@/convex/configDefaults";
+import { SOCIAL_HOSTS } from "@/convex/defaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { isPremiumPitch, normalizePitchTheme } from "@/lib/pitchTheme";
 import { UserBadges } from "@/components/UserBadge";
-import { Crown, Eye, Loader2, Sparkles } from "lucide-react";
+import { DirectMessageDialog } from "@/components/DirectMessages";
+import { PlayerAvatar } from "@/components/PlayerAvatar";
+import { useAuth } from "@/hooks/use-auth";
+import { Crown, Eye, Flame, Instagram, Loader2, MessageSquare, Sparkles, Star } from "lucide-react";
+import { useState } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 
 /**
@@ -84,12 +90,19 @@ export function ProfileModal({
     api.squads.getSquadByUserId,
     canQuery ? { userId: userId as Id<"users"> } : "skip",
   );
+  // Expanded public profile: socials, cosmetics, achievements, pinned MVP.
+  // `undefined` while loading, `null` for a deleted/signed-out manager.
+  const profileResult = useQuery(
+    api.users.getPublicProfile,
+    canQuery ? { userId: userId as Id<"users"> } : "skip",
+  );
+  const profile = profileResult ?? null;
+  const [dmOpen, setDmOpen] = useState(false);
 
   // ── Defensive resolution: every field gets a safe fallback ──
   const theme = normalizePitchTheme(subject?.activePitchTheme);
   const premium = isPremiumPitch(theme);
   const golden = subject?.hasGoldenJersey === true;
-  const border = subject?.hasProfileBorder === true;
 
   // Props win; the live squad query fills the gaps. `??` everywhere so a
   // partial projection never yields `undefined`.
@@ -104,6 +117,26 @@ export function ProfileModal({
   const rank = subject?.rank ?? squadResult?.rank ?? null;
   const managerCount = subject?.managerCount ?? squadResult?.managerCount ?? 0;
   const customTitle = subject?.customTitle ?? null;
+
+  // ── Social + showcase, with `?? {}` guards everywhere ──
+  // Unlinked handles are `null` (never ""), so the row simply doesn't render.
+  const instagram = profile?.instagram ?? null;
+  const tiktok = profile?.tiktok ?? null;
+  const cosmetics = profile?.cosmetics ?? null;
+  const stats = profile?.stats ?? null;
+  const mvp = profile?.favouritePlayer ?? null;
+  const unlockedItems = cosmetics?.unlockedItems ?? [];
+  const previewTitle = cosmetics?.customTitle ?? customTitle;
+  const badgeMeta = profile?.badgeMeta ?? null;
+  // The live profile query wins; the prop is only a fallback.
+  const border = cosmetics?.hasProfileBorder ?? subject?.hasProfileBorder === true;
+
+  // The viewer, for the self-DM guard.
+  const { user: viewer } = useAuth();
+  const viewerId = viewer?._id ?? null;
+  const canMessage =
+    userId !== null && viewerId !== null && userId !== viewerId;
+  const isOpen = open && profile !== null;
 
   // The live squad wins when present; otherwise whatever we were handed.
   const players = squadResult?.players ?? [];
@@ -180,9 +213,19 @@ export function ProfileModal({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Cosmetic status chips — tell the viewer what they're looking at. */}
-        {(premium || golden || customTitle) && (
+        {/* Cosmetic status chips + custom title & badge showcase. */}
+        {(premium || golden || previewTitle || badgeMeta || unlockedItems.length > 0) && (
           <div className="flex flex-wrap gap-1.5">
+            {previewTitle ? (
+              <Badge className="border border-violet-400/40 bg-violet-400/10 text-[10px] text-violet-200 uppercase">
+                <Crown className="mr-1 size-3" /> {previewTitle}
+              </Badge>
+            ) : null}
+            {badgeMeta ? (
+              <Badge className="border border-amber-400/40 bg-amber-400/10 text-[10px] text-amber-200 uppercase">
+                {badgeMeta.emoji} {badgeMeta.label}
+              </Badge>
+            ) : null}
             {premium ? (
               <Badge className="border border-amber-400/40 bg-amber-400/10 text-[10px] text-amber-200 uppercase">
                 <Sparkles className="mr-1 size-3" /> Premium pitch
@@ -193,10 +236,79 @@ export function ProfileModal({
                 <Crown className="mr-1 size-3" /> Golden jersey
               </Badge>
             ) : null}
-            {customTitle ? (
-              <Badge className="border border-violet-400/40 bg-violet-400/10 text-[10px] text-violet-200 uppercase">
-                {customTitle}
+            {border ? (
+              <Badge className="border border-orange-400/40 bg-orange-400/10 text-[10px] text-orange-200 uppercase">
+                <Flame className="mr-1 size-3" /> Fire border
               </Badge>
+            ) : null}
+            {/* Micro-transaction cosmetics unlocked. */}
+            {unlockedItems.length > 0 && (
+              <Badge
+                variant="secondary"
+                className="text-[10px] uppercase"
+                title={unlockedItems.map((i) => i.itemId).join(", ")}
+              >
+                {unlockedItems.length} store item
+                {unlockedItems.length === 1 ? "" : "s"}
+              </Badge>
+            )}
+          </div>
+        )}
+
+        {/* ── Achievements: points, rank, favourite house ── */}
+        {stats && (
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <MiniStat label="Points" value={String(stats.totalPoints ?? 0)} />
+            <MiniStat
+              label="Rank"
+              value={stats.rank != null && stats.managerCount > 0 ? `#${stats.rank}` : "—"}
+            />
+            <MiniStat label="House" value={stats.favouriteHouse ?? "—"} />
+          </div>
+        )}
+
+        {/* ── Pinned MVP player ── */}
+        {mvp && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-amber-400/30 bg-amber-400/10 p-2.5">
+            <PlayerAvatar
+              player={{
+                name: mvp.name,
+                position: mvp.position as never,
+                image: mvp.image,
+              }}
+              size={36}
+              className="ring-1 ring-amber-300/60"
+            />
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-300">
+                <Star className="mr-1 inline size-3" />
+                MVP pick
+              </p>
+              <p className="truncate text-sm font-semibold">{mvp.name}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Social links. Unlinked handles render nothing (null, not ""). The
+            URL is built from a FIXED host + a handle the server sanitised to
+            [a-z0-9._], so this can never become an arbitrary link. ── */}
+        {(instagram || tiktok) && (
+          <div className="flex flex-wrap gap-2">
+            {instagram ? (
+              <SocialLink
+                href={`${SOCIAL_HOSTS.instagram}${encodeURIComponent(instagram)}`}
+                icon={<Instagram className="size-3.5" />}
+                handle={`@${instagram}`}
+                label="Instagram"
+              />
+            ) : null}
+            {tiktok ? (
+              <SocialLink
+                href={`${SOCIAL_HOSTS.tiktok}${encodeURIComponent(tiktok)}`}
+                icon={<span className="text-[13px] leading-none">♪</span>}
+                handle={`@${tiktok}`}
+                label="TikTok"
+              />
             ) : null}
           </div>
         )}
@@ -240,7 +352,37 @@ export function ProfileModal({
             </div>
           </div>
         )}
+
+        {/* ── Direct message action. Disabled on your own profile (and while
+            the profile hasn't resolved an id yet), with an explicit reason in
+            the tooltip rather than a mysteriously dead button. ── */}
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => setDmOpen(true)}
+          disabled={!canMessage || !isOpen}
+          title={
+            isSelf
+              ? "You can't message yourself."
+              : !isOpen
+                ? "This manager isn't available to message."
+                : `Message @${username}`
+          }
+        >
+          <MessageSquare className="mr-1.5 size-4" /> Send message
+        </Button>
       </DialogContent>
+
+      {/* The chat lives outside the profile dialog so it isn't unmounted (and
+          doesn't lose scroll/draft state) every time the card closes. */}
+      {userId !== null && (
+        <DirectMessageDialog
+          open={dmOpen && canMessage}
+          onOpenChange={setDmOpen}
+          peerId={userId}
+          peerName={username}
+        />
+      )}
     </Dialog>
   );
 }
@@ -253,5 +395,46 @@ function Stat({ label, value }: { label: string; value: string }) {
       </p>
       <p className="font-score text-sm font-bold">{value}</p>
     </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-secondary/30 px-2 py-1.5">
+      <p className="text-muted-foreground text-[10px] font-bold uppercase tracking-wide">
+        {label}
+      </p>
+      <p className="font-score truncate text-sm font-bold">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * External social link. `rel="noopener noreferrer"` is mandatory for
+ * `target="_blank"`, and the href is composed from a fixed host + a server-
+ * sanitised handle, so this is never an attacker-controlled URL.
+ */
+function SocialLink({
+  href,
+  icon,
+  handle,
+  label,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  handle: string;
+  label: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${label} — ${handle}`}
+      className="border-border/70 bg-secondary/40 hover:border-primary/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors"
+    >
+      {icon}
+      {handle}
+    </a>
   );
 }

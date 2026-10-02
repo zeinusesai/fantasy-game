@@ -556,7 +556,8 @@ function RivalInspector({
       </SheetContent>
 
       {/* Themed profile card. Guarded by `rival !== null` so a deleted/unfinished
-          manager never opens an empty modal. */}
+          manager never opens an empty modal. Socials, achievements and the
+          pinned MVP come from `users.getPublicProfile` inside the modal. */}
       {rival !== null && (
         <ProfileModal
           open={profileOpen}

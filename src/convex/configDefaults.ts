@@ -33,6 +33,13 @@ export function chipForStage(stage: string): string | null {
  */
 export const FIXED_MANAGER_BUDGET = 70_000_000;
 
+/**
+ * Hard cap on one direct-message body. Lives here (a PURE module, safe to
+ * import from both the Convex server and the React client) so the composer can
+ * show a live counter against the exact same limit the server enforces.
+ */
+export const MAX_MESSAGE_LENGTH = 1000;
+
 export const DEFAULT_CONFIG = {
   budget: FIXED_MANAGER_BUDGET, // $70m — fixed for all managers
   houseLimit: 3,

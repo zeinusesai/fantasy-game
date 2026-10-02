@@ -211,6 +211,36 @@ export function cleanBadgeId(value: unknown): string {
   return /^[a-z0-9_]{2,24}$/.test(s) ? s : "";
 }
 
+/**
+ * Sanitise a social handle for STORAGE: lowercase, no leading "@", only the
+ * characters real handles use, hard-capped at 30. A pasted profile URL
+ * (`https://instagram.com/zein`) is accepted and reduced to the handle.
+ *
+ * Returns `null` for anything unusable so the field is simply ABSENT rather
+ * than storing junk. Because the output can only ever contain `[a-z0-9._]`,
+ * the client builds a URL from a FIXED host — a stored handle can never become
+ * an arbitrary (or `javascript:`) link.
+ *
+ * TOTAL: never throws; null/undefined/numbers/objects all return null.
+ */
+export function cleanSocialHandle(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const stripped = value
+    .trim()
+    .replace(/^@+/, "")
+    .replace(/^https?:\/\/[^/]+\//i, "")
+    .split(/[/?#]/)[0]
+    .toLowerCase();
+  const cleaned = stripped.replace(/[^a-z0-9._]/g, "").slice(0, 30);
+  return cleaned.length >= 2 ? cleaned : null;
+}
+
+/** Fixed, non-user-controlled hosts for the rendered social links. */
+export const SOCIAL_HOSTS = {
+  instagram: "https://www.instagram.com/",
+  tiktok: "https://www.tiktok.com/@",
+} as const;
+
 /** Position-keyed lookup helper for the scoring matrix. */
 export function goalPointsFor(
   rules: ScoringRules,

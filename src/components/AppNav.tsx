@@ -32,6 +32,9 @@ import {
 import type { ReactNode } from "react";
 import { useNavigate, NavLink } from "react-router";
 import { Bell } from "lucide-react";
+import { UnreadBadge, DirectMessages } from "@/components/DirectMessages";
+import { MessageSquare } from "lucide-react";
+import { useState } from "react";
 
 const LINKS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -50,6 +53,8 @@ export function AppNav({ children }: { children: ReactNode }) {
     ? user.image
     : avatarPresetUrl(user?.image);
   const deadline = useDeadlineBanner();
+  // The messages slide-over is mounted once here so any page can open it.
+  const [messagesOpen, setMessagesOpen] = useState(false);
 
   // Maintenance flag — safe default while loading / when unset.
   const statusResult = useQuery(api.system.getMaintenanceStatus);
@@ -132,6 +137,22 @@ export function AppNav({ children }: { children: ReactNode }) {
               <span className="hidden lg:inline text-xs">Alerts</span>
             </Button>
           )}
+
+          {/* Direct messages + unread counter for incoming DMs. */}
+          <Button
+            variant="ghost"
+            className="gap-2 px-2"
+            onClick={() => setMessagesOpen(true)}
+            title="Messages"
+          >
+            <span className="relative inline-flex">
+              <MessageSquare className="size-4" />
+              <span className="absolute -right-2 -top-2">
+                <UnreadBadge />
+              </span>
+            </span>
+            <span className="hidden lg:inline text-xs">Messages</span>
+          </Button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -227,6 +248,10 @@ export function AppNav({ children }: { children: ReactNode }) {
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6">{children}</main>
+
+      {/* In-app direct messages. Rendered at the shell level so the thread
+          list and the unread badge stay live on every page. */}
+      <DirectMessages open={messagesOpen} onOpenChange={setMessagesOpen} />
     </div>
   );
 }
