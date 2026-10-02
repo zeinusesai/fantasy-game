@@ -184,6 +184,13 @@ export function AvatarPicker({
                             width={44}
                             height={44}
                             className="size-11 rounded-full"
+                            loading="lazy"
+                            onError={(e) => {
+                              // Presets are inline SVGs, but a bad/custom one
+                              // must degrade to the emoji fallback, never a
+                              // broken-image glyph.
+                              (e.target as HTMLImageElement).style.visibility = "hidden";
+                            }}
                           />
                         ) : (
                           <span

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { cn } from "@/lib/utils";
@@ -89,7 +90,12 @@ export function HouseCrest({
   const brandColor = color(house);
   const label = houseName(house);
   const custom = logos[house];
-  if (custom) {
+  // Admin-supplied crest URLs can 404 or be deleted at any time. Remembering the
+  // failed URL (rather than a boolean) means a *new* logo is retried as soon as
+  // it is saved, and a broken one swaps cleanly to the themed placeholder
+  // without a browser broken-image glyph or a layout jump.
+  const [failedCrest, setFailedCrest] = useState<string | null>(null);
+  if (custom && failedCrest !== custom) {
     return (
       <img
         src={custom}
@@ -98,6 +104,8 @@ export function HouseCrest({
         height={size}
         className={cn("rounded-lg object-cover ring-1", RING_COLORS[house], className)}
         style={{ width: size, height: size }}
+        loading="lazy"
+        onError={() => setFailedCrest(custom)}
       />
     );
   }

@@ -314,6 +314,27 @@ const schema = defineSchema(
       .index("by_player", ["playerId"])
       .index("by_user", ["userId"]),
 
+    // ===== Photo removal requests from managers (Super Admin reviews) =====
+    // Managers can flag a player photo as wrong/inappropriate. Approving a
+    // request clears `players.image` in the same transaction, so the whole UI
+    // falls back to the position-based jersey / initials avatar. `currentImage`
+    // is a denormalized snapshot so the admin queue still shows what was
+    // reported even if the photo was later changed or the player deleted.
+    photoRequests: defineTable({
+      userId: v.id("users"),
+      username: v.optional(v.string()),
+      playerId: v.id("players"),
+      playerName: v.string(),
+      currentImage: v.optional(v.string()), // the URL as it was when reported
+      reason: v.string(), // optional to the manager, stored as "" when blank
+      status: requestStatusValidator, // "pending" | "approved" | "denied"
+      decidedBy: v.optional(v.string()),
+      decidedAt: v.optional(v.number()),
+    })
+      .index("by_status", ["status"])
+      .index("by_player", ["playerId"])
+      .index("by_user", ["userId"]),
+
     // ===== System-level flags + Super Admin customization (singleton row) =====
     // One row holds every global setting Zein can edit. Every field is
     // optional so a fresh database returns safe defaults rather than failing.

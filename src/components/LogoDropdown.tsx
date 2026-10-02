@@ -40,6 +40,11 @@ export function LogoDropdown() {
             width={32}
             height={32}
             className="rounded-lg"
+            // Bundled asset, but keep the guard so a bad build can never
+            // render a broken-image glyph inside the fixed-size button.
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.visibility = "hidden";
+            }}
           />
         </Button>
       </DropdownMenuTrigger>

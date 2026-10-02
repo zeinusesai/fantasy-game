@@ -52,6 +52,11 @@ import type { House, Position, RequestStatus, Stage } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
 type PriceRequest = Doc<"priceRequests"> & { avatar: string | null };
+type PhotoRequest = Doc<"photoRequests"> & {
+  avatar: string | null;
+  /** The player's live photo (null when already cleared / player deleted). */
+  currentPhoto: string | null;
+};
 
 // ── Shared safe-avatar + player-photo helpers ───────────────────────────
 
@@ -169,6 +174,33 @@ export default function Admin() {
   const requestsLoading = requestsResult === undefined;
   const pendingCount = requests.filter((r) => r.status === "pending").length;
 
+  // ── Photo removal requests — same queue shape, same defensive [] default ──
+  const photoRequestsResult = useQuery(api.requests.listPhotoRequests);
+  const reviewPhotoRequest = useMutation(api.requests.reviewPhotoRequest);
+  const photoRequests = photoRequestsResult ?? [];
+  const photoRequestsLoading = photoRequestsResult === undefined;
+  const pendingPhotoCount = photoRequests.filter(
+    (r) => r.status === "pending",
+  ).length;
+
+  const handleReviewPhoto = async (
+    requestId: Id<"photoRequests">,
+    decision: "approve" | "deny",
+  ) => {
+    try {
+      const result = await reviewPhotoRequest({ requestId, decision });
+      toast.success(
+        decision === "approve"
+          ? result.removed
+            ? "Photo removed successfully — the player now uses the default avatar."
+            : "Request approved — the player no longer has a photo."
+          : "Photo request dismissed — the photo stays.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not record the decision.");
+    }
+  };
+
   const [adjustFor, setAdjustFor] = useState<PriceRequest | null>(null);
   const [adjustPrice, setAdjustPrice] = useState("");
 
@@ -247,9 +279,9 @@ export default function Admin() {
             <TabsTrigger value="players">Players</TabsTrigger>
             <TabsTrigger value="requests" className="gap-1.5">
               <Inbox className="size-3.5" /> Requests
-              {pendingCount > 0 && (
+              {pendingCount + pendingPhotoCount > 0 && (
                 <Badge className="bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5">
-                  {pendingCount}
+                  {pendingCount + pendingPhotoCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -297,6 +329,10 @@ export default function Admin() {
               setAdjustFor={setAdjustFor}
               adjustPrice={adjustPrice}
               setAdjustPrice={setAdjustPrice}
+              photoRequests={photoRequests}
+              photoRequestsLoading={photoRequestsLoading}
+              onReviewPhoto={handleReviewPhoto}
+              isSuper={isSuper}
             />
           </TabsContent>
           {isSuper && (
@@ -355,6 +391,7 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
   const updatePlayer = useMutation(api.players.updatePlayer);
   const deletePlayer = useMutation(api.players.deletePlayer);
   const setPlayerImage = useMutation(api.players.setPlayerImage);
+  const removePlayerPhoto = useMutation(api.players.removePlayerPhoto);
   const setPlayerStatus = useMutation(api.players.setPlayerStatus);
   const bulkSetPlayerStatus = useMutation(api.players.bulkSetPlayerStatus);
 
@@ -429,6 +466,7 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
   const [imgBusy, setImgBusy] = useState(false);
 
   const startImageEdit = (p: Doc<"players">) => {
+    setImgBusy(false);
     setImgFor(p);
     setImgUrl(p.image ?? "");
   };
@@ -451,12 +489,20 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
     }
   };
 
+  // Dedicated moderation path (Super Admin only, enforced server-side).
+  // Idempotent on the server, so a double click or a stale tab still resolves
+  // with a success toast instead of an error.
   const handleRemoveImage = async () => {
     if (!imgFor) return;
+    const name = imgFor.name;
     setImgBusy(true);
     try {
-      await setPlayerImage({ playerId: imgFor._id, image: "" });
-      toast.success(`Photo removed for ${imgFor.name}.`);
+      const result = await removePlayerPhoto({ playerId: imgFor._id });
+      toast.success(
+        result.removed
+          ? `Player photo removed successfully — ${name} now uses the default avatar.`
+          : `${name} already has no photo.`,
+      );
       setImgFor(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not remove the photo.");
@@ -878,7 +924,24 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
                 );
               })()}
               <div className="grid flex-1 gap-1.5">
-                <Label htmlFor="player-image">Image URL</Label>
+                <Label htmlFor="player-image" className="flex items-center justify-between gap-2">
+                  <span>Image URL</span>
+                  {/* Direct removal — Super Admin only (server-enforced).
+                      Clears the stored photo immediately; every avatar on the
+                      page falls back to the initials/position disc. */}
+                  {imgFor?.image && isSuper ? (
+                    <button
+                      type="button"
+                      onClick={handleRemoveImage}
+                      disabled={imgBusy}
+                      title="Remove this player's photo (Super Admin only)"
+                      className="text-destructive inline-flex items-center gap-1 text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50"
+                    >
+                      <Trash2 className="size-3" />
+                      Remove photo
+                    </button>
+                  ) : null}
+                </Label>
                 <Input
                   id="player-image"
                   value={imgUrl}
@@ -889,13 +952,24 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
             </div>
             <p className="text-muted-foreground text-xs">
               Paste a direct image link (http/https) or a data URL. Leave empty and
-              press Save to clear the photo.
+              press Save to clear the photo. Removing it falls back to the default
+              initials/position avatar everywhere — pitch cards, market and lineups.
             </p>
           </div>
           <DialogFooter>
-            {imgFor?.image ? (
-              <Button variant="outline" onClick={handleRemoveImage} disabled={imgBusy}>
-                <Trash2 className="mr-1.5 size-3.5" /> Remove
+            {imgFor?.image && isSuper ? (
+              <Button
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={handleRemoveImage}
+                disabled={imgBusy}
+              >
+                {imgBusy ? (
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-1.5 size-3.5" />
+                )}
+                Remove photo
               </Button>
             ) : null}
             <Button variant="ghost" onClick={() => setImgFor(null)}>
@@ -1815,6 +1889,10 @@ function RequestsTab({
   setAdjustFor,
   adjustPrice,
   setAdjustPrice,
+  photoRequests,
+  photoRequestsLoading,
+  onReviewPhoto,
+  isSuper,
 }: {
   requests: PriceRequest[];
   loading: boolean;
@@ -1827,15 +1905,172 @@ function RequestsTab({
   setAdjustFor: (r: PriceRequest | null) => void;
   adjustPrice: string;
   setAdjustPrice: (v: string) => void;
+  photoRequests: PhotoRequest[];
+  photoRequestsLoading: boolean;
+  onReviewPhoto: (
+    requestId: Id<"photoRequests">,
+    decision: "approve" | "deny",
+  ) => void;
+  isSuper: boolean;
 }) {
   const parsedAdjust = parseMoneyInput(adjustPrice);
   const adjustValid = parsedAdjust !== null && parsedAdjust >= 0;
 
   const pending = requests.filter((r) => r.status === "pending");
   const reviewed = requests.filter((r) => r.status !== "pending");
+  const photoPending = photoRequests.filter((r) => r.status === "pending");
+  const photoReviewed = photoRequests.filter((r) => r.status !== "pending");
 
   return (
     <div className="space-y-4">
+      {/* ── Photo removal requests (manager-reported, Super Admin decides) ── */}
+      <Card className="border-border/80">
+        <CardHeader>
+          <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
+            <ImagePlus className="text-primary size-4" /> Photo removal requests
+            {photoPending.length > 0 && (
+              <Badge className="border border-amber-400/40 bg-amber-400/20 text-amber-300 px-1.5 text-[10px]">
+                {photoPending.length}
+              </Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            Managers can flag a player photo as wrong or inappropriate. Approving
+            clears the photo instantly — the player falls back to their default
+            initials/position avatar everywhere.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {photoRequestsLoading ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading photo requests…
+            </p>
+          ) : photoPending.length === 0 ? (
+            <p className="text-muted-foreground py-8 text-center text-sm">
+              No pending photo requests right now.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {photoPending.map((r) => (
+                <div
+                  key={r._id}
+                  className="rounded-xl border border-border/70 bg-secondary/40 p-4"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <PlayerCellPhoto name={r.playerName} image={r.currentPhoto} />
+                      <div className="min-w-0">
+                        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                          <span className="text-primary">{r.playerName}</span>
+                          <span className="text-muted-foreground font-normal">
+                            reported by
+                          </span>
+                          <span>@{r.username || "unknown"}</span>
+                        </p>
+                        <p className="text-muted-foreground mt-0.5 text-xs">
+                          {r.currentPhoto
+                            ? "Photo is currently live on this player."
+                            : "The photo has already been cleared on this player."}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="text-[10px] uppercase">
+                      pending
+                    </Badge>
+                  </div>
+                  {r.reason ? (
+                    <p className="text-muted-foreground mt-2 rounded-lg border border-border/60 bg-background/40 p-2.5 text-sm italic">
+                      “{r.reason}”
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground mt-2 text-xs italic">
+                      No reason given.
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={!isSuper}
+                      title={
+                        isSuper
+                          ? "Approve and clear this player's photo"
+                          : "Only the Super Admin can approve photo removals"
+                      }
+                      onClick={() => onReviewPhoto(r._id, "approve")}
+                    >
+                      <Trash2 className="mr-1.5 size-3.5" /> Approve removal (clear
+                      photo)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!isSuper}
+                      title={
+                        isSuper
+                          ? "Dismiss — keep the photo"
+                          : "Only the Super Admin can dismiss photo requests"
+                      }
+                      onClick={() => onReviewPhoto(r._id, "deny")}
+                    >
+                      <XCircle className="mr-1.5 size-3.5" /> Dismiss
+                    </Button>
+                  </div>
+                  {!isSuper && (
+                    <p className="text-muted-foreground mt-2 text-[11px]">
+                      Waiting on the Super Admin (Zein) to review this request.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {photoReviewed.length > 0 && (
+        <Card className="border-border/80">
+          <CardHeader>
+            <CardTitle className="font-display text-sm font-bold uppercase tracking-widest">
+              Photo requests reviewed
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {photoReviewed.map((r) => (
+              <div
+                key={r._id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
+              >
+                <p className="text-sm">
+                  <span className="font-semibold">{r.playerName}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    for @{r.username || "unknown"}
+                  </span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant="secondary"
+                    className={
+                      r.status === "approved"
+                        ? "border border-emerald-400/40 bg-emerald-400/15 text-[10px] text-emerald-300 uppercase"
+                        : "text-[10px] uppercase"
+                    }
+                  >
+                    {r.status}
+                  </Badge>
+                  {r.decidedBy ? (
+                    <span className="text-muted-foreground text-[11px]">
+                      by {r.decidedBy}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-border/80">
         <CardHeader>
           <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">

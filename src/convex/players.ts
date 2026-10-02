@@ -82,6 +82,69 @@ export const setPlayerImage = mutation({
 });
 
 /**
+ * Super Admin only: strip a player's photo entirely.
+ *
+ * Distinct from `setPlayerImage({ image: "" })` on purpose — this is the
+ * dedicated moderation entry point used by the Admin panel's "Remove photo"
+ * button and by approving a `photoRequests` row. It is idempotent (clearing an
+ * already-clear player is a no-op success rather than an error) so a double
+ * click, a replayed mutation, or a stale admin tab can never surface an
+ * exception or toast failure to the Super Admin.
+ *
+ * Patching with `undefined` *removes* the field (Convex semantics); `null` is
+ * not assignable to the optional `image` field, so it must never be used.
+ */
+export const removePlayerPhoto = mutation({
+  args: { playerId: v.id("players") },
+  handler: async (ctx, { playerId }) => {
+    try {
+      await requireSuperAdmin(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? err.message
+          : "Only the Super Admin can remove a player photo.",
+      );
+    }
+
+    try {
+      const player = await ctx.db.get(playerId);
+      if (!player) {
+        throw new Error("Player not found — it may have already been removed.");
+      }
+
+      // Already photo-less: report success so the UI stays calm and converges.
+      const current = typeof player.image === "string" ? player.image.trim() : "";
+      if (current === "") return { removed: false as const, image: null };
+
+      await ctx.db.patch(playerId, { image: undefined });
+
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "remove_player_photo",
+          category: "config",
+          target: player.name,
+          detail: "photo cleared — UI falls back to the default avatar",
+        });
+      } catch {
+        // audit is non-fatal
+      }
+
+      return { removed: true as const, image: null };
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message.length > 0 &&
+        !err.message.startsWith("Uncaught")
+      ) {
+        throw err; // rethrow our own clean validation messages untouched
+      }
+      throw new Error("Could not remove the player photo — please try again.");
+    }
+  },
+});
+
+/**
  * Super Admin only: set (or clear) one player's availability label.
  * `statusLabel: null` removes the field so the player falls back to the
  * "Expected to Start" default everywhere.

@@ -43,7 +43,7 @@ import { AppNav } from "@/components/AppNav";
 import { PageLoading } from "@/components/PageLoading";
 import { PickedByDialog } from "@/components/PickedByDialog";
 import { downloadShareCard } from "@/lib/shareCard";
-import { Share2, Zap, Lock, LayoutGrid } from "lucide-react";
+import { Share2, Zap, Lock, LayoutGrid, ImageOff } from "lucide-react";
 import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
@@ -143,6 +143,22 @@ export default function SquadBuilder() {
       .map((r) => [r.playerId as string, r]),
   );
   const [requestFor, setRequestFor] = useState<PlayerRow | null>(null);
+
+  // ── Photo removal report modal state (managers → Super Admin queue) ──
+  const submitPhotoRequest = useMutation(api.requests.submitPhotoRequest);
+  const myPhotoRequestsResult = useQuery(api.requests.getMyPhotoRequests);
+  const pendingPhotoByPlayer = useMemo(
+    () =>
+      new Set(
+        (myPhotoRequestsResult ?? [])
+          .filter((r) => r.status === "pending")
+          .map((r) => r.playerId as string),
+      ),
+    [myPhotoRequestsResult],
+  );
+  const [photoReportFor, setPhotoReportFor] = useState<PlayerRow | null>(null);
+  const [photoReason, setPhotoReason] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   // Budget-reset state: sticky for the session so the guidance banner and the
   // repair path survive the auto-clear (which empties the stored squad).
   const [budgetResetMode, setBudgetResetMode] = useState(false);
@@ -287,6 +303,32 @@ export default function SquadBuilder() {
       toast.error(err instanceof Error ? err.message : "Could not submit the request.");
     } finally {
       setReqBusy(false);
+    }
+  };
+
+  const openPhotoReport = (p: PlayerRow) => {
+    setPhotoReportFor(p);
+    setPhotoReason("");
+  };
+
+  const handleSubmitPhotoReport = async () => {
+    if (!photoReportFor) return;
+    setPhotoBusy(true);
+    try {
+      await submitPhotoRequest({
+        playerId: photoReportFor._id,
+        // Reason is optional server-side; blank is stored as "".
+        reason: photoReason.trim(),
+      });
+      toast.success(
+        `Photo report for ${photoReportFor.name} sent to the admins.`,
+      );
+      setPhotoReportFor(null);
+      setPhotoReason("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send the report.");
+    } finally {
+      setPhotoBusy(false);
     }
   };
 
@@ -957,6 +999,75 @@ export default function SquadBuilder() {
         </DialogContent>
       </Dialog>
 
+      {/* Photo removal report modal */}
+      <Dialog
+        open={photoReportFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setPhotoReportFor(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Report this photo</DialogTitle>
+            <DialogDescription>
+              Think{" "}
+              <span className="text-foreground font-semibold">
+                {photoReportFor?.name ?? "this player"}
+              </span>
+              's photo is wrong, low quality or inappropriate? Send it to the
+              Super Admin. If it's approved, the photo is cleared and everyone
+              sees the default avatar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-secondary/30 p-3">
+              {photoReportFor && (
+                <MarketPhoto player={photoReportFor} sizeClass="size-10" />
+              )}
+              <div className="min-w-0 text-sm">
+                <p className="truncate font-semibold">
+                  {photoReportFor?.name ?? "Player"}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Reason is optional but helps the admin decide.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="photo-reason">Reason (optional)</Label>
+              <Textarea
+                id="photo-reason"
+                value={photoReason}
+                onChange={(e) => setPhotoReason(e.target.value)}
+                placeholder="e.g. This is the wrong player, or the image is a link to another site."
+                rows={3}
+                maxLength={400}
+              />
+              <p className="text-muted-foreground text-xs">
+                {photoReason.trim().length}/400 characters
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPhotoReportFor(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleSubmitPhotoReport}
+              disabled={photoBusy || photoReportFor === null}
+            >
+              {photoBusy ? (
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+              ) : (
+                <ImageOff className="mr-1.5 size-4" />
+              )}
+              Send report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Manager pick inspection — who owns this player? */}
       <PickedByDialog
         player={pickedByFor ? { _id: pickedByFor._id, name: pickedByFor.name } : null}
@@ -996,6 +1107,23 @@ export default function SquadBuilder() {
             const isMine = selected.includes(detailFor._id);
             return (
               <div className="space-y-3">
+                {/* Photo moderation — subtle, manager-facing. A player with no
+                    photo can't be reported (the mutation rejects it anyway),
+                    and a duplicate pending report is disabled, not errored. */}
+                <button
+                  type="button"
+                  disabled={photoBusy}
+                  onClick={() => {
+                    openPhotoReport(detailFor);
+                    setDetailFor(null);
+                  }}
+                  className="text-muted-foreground hover:text-foreground flex w-full items-center justify-center gap-1.5 text-[11px] transition-colors disabled:opacity-50"
+                >
+                  <ImageOff className="size-3" />
+                  {pendingPhotoByPlayer.has(detailFor._id as string)
+                    ? "Photo report pending review"
+                    : "Report / request photo removal"}
+                </button>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <button
                     type="button"
