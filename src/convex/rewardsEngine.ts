@@ -400,12 +400,9 @@ async function runEvaluation(
     for (const snapshot of list) {
       // A gameweek that hasn't been scored has nothing to evaluate.
       if (snapshot.points <= 0 && snapshot.benchPoints <= 0) continue;
-      const { unlocked, progress } = evaluateGameweekSnapshot(snapshot);
+      const { unlocked } = evaluateGameweekSnapshot(snapshot);
       for (const cosmeticId of unlocked) {
         const def = cosmeticById(cosmeticId);
-        const feat = progress.find((p: FeatProgress) =>
-          def?.unlockKey ? p.featId === def.unlockKey : false,
-        );
         const fresh = await grantCosmetic(ctx, typedId, cosmeticId, {
           featId: def?.unlockKey ?? undefined,
           gameweek: snapshot.gameweek,

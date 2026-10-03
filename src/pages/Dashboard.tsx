@@ -49,12 +49,14 @@ export default function Dashboard() {
   // `undefined` = query still resolving; `null` = resolved, no squad yet.
   const mySquad = useQuery(api.squads.getMySquad);
   const myStats = useQuery(api.managers.getMyStats);
-  // Store cosmetic: "Golden Jersey / Premium Pitch" unlocks a gold pitch.
-  // Falls back to the store query, then to the plain green default.
-  const store = useQuery(api.transactions.getStore);
+  // EARNED cosmetics: an equipped premium pitch/golden jersey (either the
+  // legacy golden_theme or the feat-earned Tactical Mastermind skin) renders
+  // the gold pitch. Resolved from the Hall of Fame showcase; falls back to
+  // the plain green default.
+  const showcase = useQuery(api.rewardsEngine.getShowcase);
   const goldTheme =
-    (store?.items ?? []).some(
-      (i) => i.id === "golden_theme" && i.owned && i.unlocked,
+    (showcase?.equipped ?? []).some(
+      (id) => id === "golden_theme" || id === "tactical_mastermind_pitch",
     ) === true;
   const matches = useQuery(api.matches.listMatches);
   const config = useQuery(api.config.getConfig);
@@ -234,6 +236,7 @@ export default function Dashboard() {
                   // a manager who hasn't unlocked (or has toggled off) them.
                   theme={user?.activePitchTheme ?? (goldTheme ? "premium" : "default")}
                   goldenJersey={user?.hasGoldenJersey === true || goldTheme}
+                  goldenBootKit={user?.hasEquippedKit === true}
                 />
                 {goldTheme && (
                   <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-widest text-amber-300">

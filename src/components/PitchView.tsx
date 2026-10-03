@@ -132,6 +132,7 @@ export function PlayerBadge({
   player,
   size = 64,
   golden = false,
+  goldenBootKit = false,
 }: {
   player: PhotoSource & {
     name: string;
@@ -139,8 +140,10 @@ export function PlayerBadge({
     isCaptain?: boolean;
   };
   size?: number;
-  /** Store cosmetic: render the golden jersey disc. */
+  /** Earned cosmetic: render the golden jersey disc. */
   golden?: boolean;
+  /** Earned cosmetic (Golden Boot): render the deeper kit-skin jersey. */
+  goldenBootKit?: boolean;
 }) {
   return (
     // Padding layer: gives the captain badge + glow room to render outside the
@@ -149,9 +152,14 @@ export function PlayerBadge({
       <span
         className={cn(
           "relative flex shrink-0 items-center justify-center overflow-visible rounded-full",
-          golden
-            ? cn("jersey-gold", "ring-2 ring-amber-200/90 shadow-[0_0_20px_rgba(251,191,36,0.55)]")
-            : "bg-slate-900/85 ring-2 ring-white/40 shadow-lg",
+          // The Golden Boot kit skin takes precedence over the plain gold
+          // jersey — it's the rarer, feat-earned tier, so it must not be
+          // silently downgraded when both are equipped.
+          goldenBootKit
+            ? cn("jersey-kit-golden-boot", "ring-2 ring-amber-100/80")
+            : golden
+              ? cn("jersey-gold", "ring-2 ring-amber-200/90 shadow-[0_0_20px_rgba(251,191,36,0.55)]")
+              : "bg-slate-900/85 ring-2 ring-white/40 shadow-lg",
           player.isCaptain &&
             "ring-2 ring-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.65)]",
         )}
@@ -230,6 +238,7 @@ export function PitchView({
   className,
   theme,
   goldenJersey = false,
+  goldenBootKit = false,
 }: {
   byPosition: Partial<Record<Position, PitchPlayer[]>>;
   emptyLabel?: string;
@@ -246,14 +255,17 @@ export function PitchView({
    * all resolve to the standard green pitch via `normalizePitchTheme`.
    */
   theme?: PitchTheme | string | null;
-  /** Store cosmetic: render the starters' golden jerseys. */
+  /** Earned cosmetic: render the starters' golden jerseys. */
   goldenJersey?: boolean;
+  /** Earned cosmetic (Golden Boot): render the striker's kit skin. */
+  goldenBootKit?: boolean;
 }) {
   // Single safe resolution point — everything downstream uses these values.
   const currentFormation = resolveFormation(formation ?? DEFAULT_FORMATION);
   const currentTheme = normalizePitchTheme(theme);
   const premium = currentTheme === "premium";
   const gold = goldenJersey === true;
+  const bootKit = goldenBootKit === true;
   const cells = assignToSlots(byPosition, currentFormation);
 
   return (
@@ -333,7 +345,12 @@ export function PitchView({
                     {/* `NODE_SIZE` (52px) is the visual disc; the PlayerBadge
                         padding layer expands the HIT area to 44px+ without
                         growing the node, so adjacent slots never collide. */}
-                    <PlayerBadge player={p} size={NODE_SIZE} golden={gold} />
+                    <PlayerBadge
+                      player={p}
+                      size={NODE_SIZE}
+                      golden={gold}
+                      goldenBootKit={bootKit}
+                    />
                     {p.isPotm && (
                       // Top-LEFT: the top-right corner belongs to the captain
                       // badge, so the two never overlap.

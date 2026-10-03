@@ -12,6 +12,7 @@ import {
 
 import { cleanSocialHandle } from "./defaults";
 import { normalizeHouse } from "./defaults";
+import { cosmeticById } from "./rewards";
 import { HOUSES, type House } from "./schema";
 
 // ── Avatar uploads (Convex file storage) ─────────────────────────────────
@@ -251,6 +252,11 @@ export const getLeaderboard = query({
     // border beside their name always means they actually earned it.
     const borderOwners = new Set<string>();
     const titleOwners = new Set<string>();
+    const glowOwners = new Set<string>();
+    // The EQUIPPED badge cosmetic (Pacesetter / Bargain Hunter), with the
+    // emoji the client renders. Only one badge slot can be worn at a time, so
+    // this is a single id per manager rather than a set.
+    const badgeByUser = new Map<string, string>();
     try {
       const unlocks = await ctx.db.query("cosmeticUnlocks").collect();
       for (const u of unlocks) {
@@ -260,6 +266,14 @@ export const getLeaderboard = query({
         }
         if (u.cosmeticId === "custom_title" || u.cosmeticId === "clutch_performer_title") {
           titleOwners.add(String(u.userId));
+        }
+        // The Iron Defence name glow applies to the NAME on the leaderboard.
+        if (u.cosmeticId === "iron_defence_glow") {
+          glowOwners.add(String(u.userId));
+        }
+        // Badges render beside the name as an emoji chip.
+        if (cosmeticById(u.cosmeticId)?.slot === "badge") {
+          badgeByUser.set(String(u.userId), String(u.cosmeticId));
         }
       }
     } catch {
@@ -296,6 +310,10 @@ export const getLeaderboard = query({
             ? user.customTitle.trim().slice(0, 24)
             : null,
         hasStoreBorder: borderOwners.has(String(row.userId)),
+        // Iron Defence name glow (earned, then equipped by the manager).
+        hasNameGlow: glowOwners.has(String(row.userId)),
+        // Equipped earned badge (Pacesetter / Bargain Hunter), if any.
+        equippedBadgeId: badgeByUser.get(String(row.userId)) ?? null,
         role: user?.role ?? null,
         // Manual house preference for the subtle row indicator. Normalised
         // so a corrupt row can never render a bogus house name.

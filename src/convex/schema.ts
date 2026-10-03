@@ -109,9 +109,9 @@ const schema = defineSchema(
       budget: v.optional(v.number()), // deprecated: legacy per-user budget
       customBudget: v.optional(v.number()), // deprecated: legacy admin override
       customBadge: v.optional(v.string()), // custom badge: star | gold_checkmark | fire | crown | shield | diamond | none
-      // Custom manager title shown on the leaderboard. Gated behind the
-      // "custom_title" store entitlement; a value here without the
-      // entitlement is simply ignored by the UI.
+      // Custom manager title shown on the leaderboard. Gated behind an EARNED
+      // title cosmetic (`custom_title` or `clutch_performer_title`); a value
+      // here without one is simply ignored by the UI.
       customTitle: v.optional(v.string()),
       // Public social handles, stored WITHOUT the leading "@" (normalised by
       // managers.updateProfile). Both optional and never rendered as anything

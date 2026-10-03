@@ -32,6 +32,7 @@ import { ProfileModal } from "@/components/ProfileModal";
 import { SkeletonList } from "@/components/Skeletons";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+import { cosmeticById, cosmeticEmoji } from "@/convex/rewards";
 import type { Id } from "@/convex/_generated/dataModel";
 import {
   BarChart3,
@@ -369,7 +370,23 @@ export default function Leaderboard() {
                             className="group flex flex-wrap items-center gap-1.5 text-left font-semibold transition-colors hover:text-primary focus-visible:text-primary focus-visible:outline-none"
                           >
                             <span className="flex items-center gap-1.5">
-                              {row.teamName}
+                              {/* Earned cosmetic: Iron Defence name glow.
+                                  A text-shadow only, so it never shifts
+                                  layout or overrides the name colour. */}
+                              <span className={cn(row.hasNameGlow && "name-glow-iron")}>
+                                {row.teamName}
+                              </span>
+                              {/* Earned badge cosmetic (Pacesetter /
+                                  Bargain Hunter), rendered beside the name. */}
+                              {row.equippedBadgeId ? (
+                                <span
+                                  title={cosmeticById(row.equippedBadgeId)?.name ?? "Badge"}
+                                  aria-label={cosmeticById(row.equippedBadgeId)?.name ?? "Badge"}
+                                  className="shrink-0 text-sm leading-none"
+                                >
+                                  {cosmeticEmoji(row.equippedBadgeId)}
+                                </span>
+                              ) : null}
                               {/* Subtle manual house indicator. Renders
                                   nothing when the manager hasn't chosen
                                   one, so it never adds noise to the row. */}
@@ -662,6 +679,7 @@ function RivalInspector({
                   // fallbacks keep the plain green pitch for everyone else.
                   theme={rival?.activePitchTheme ?? "default"}
                   goldenJersey={rival?.hasGoldenJersey === true}
+                  goldenBootKit={rival?.hasEquippedKit === true}
                 />
               </div>
             </>
@@ -706,6 +724,7 @@ function RivalInspector({
             // manager who has never unlocked or toggled anything.
             activePitchTheme: rival.activePitchTheme ?? "default",
             hasGoldenJersey: rival.hasGoldenJersey === true,
+            hasEquippedKit: rival.hasEquippedKit === true,
           }}
         />
       )}

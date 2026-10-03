@@ -369,7 +369,7 @@ export const settleGameweek = mutation({
         // must never roll back the score that triggered it. The Super Admin
         // can also run it manually from the audit panel.
         try {
-          await ctx.runMutation(internal.rewardsServer.evaluateRewardsInternal, {});
+          await ctx.runMutation(internal.rewardsEngine.evaluateRewardsInternal, {});
         } catch {
           // Non-fatal.
         }

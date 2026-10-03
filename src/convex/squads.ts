@@ -405,6 +405,7 @@ export const getSquadByUserId = query({
           role: user.role ?? null,
           activePitchTheme: cosmetics.activePitchTheme,
           hasGoldenJersey: cosmetics.hasGoldenJersey,
+          hasEquippedKit: cosmetics.hasEquippedKit,
           overBudgetReset: true,
         };
       }
@@ -430,6 +431,7 @@ export const getSquadByUserId = query({
         role: user.role ?? null,
         activePitchTheme: cosmetics.activePitchTheme,
         hasGoldenJersey: cosmetics.hasGoldenJersey,
+        hasEquippedKit: cosmetics.hasEquippedKit,
         overBudgetReset: false,
       };
     } catch {

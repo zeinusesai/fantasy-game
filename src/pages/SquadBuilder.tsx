@@ -191,8 +191,6 @@ export default function SquadBuilder() {
     chip: null,
     used: false,
     available: false,
-    extraChips: 0,
-    extraChipsLeft: 0,
   };
   const activateChip = useMutation(api.gameweeks.activateChip);
   const deactivateChip = useMutation(api.gameweeks.deactivateChip);
@@ -561,18 +559,15 @@ export default function SquadBuilder() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {/* Double Down chip: one free per tournament, plus any store-bought
-                  extra chips. The button stays visible while extras remain. */}
-              {(!chipStatus.used || chipStatus.extraChipsLeft > 0) && (
+              {/* Double Down chip: EXACTLY ONE per manager for the whole tournament.
+                  The extra-chip store item has been removed, so the allocation
+                  is strictly equal and fair for everyone. */}
+              {(!chipStatus.used || chipStatus.chip) && (
                 <Button
                   variant={chipStatus.chip ? "default" : "outline"}
                   onClick={handleToggleChip}
                   disabled={chipBusy[0] || readOnly || (!chipStatus.available && !chipStatus.chip)}
-                  title={
-                    chipStatus.extraChipsLeft > 0
-                      ? `${chipStatus.extraChipsLeft} store chip${chipStatus.extraChipsLeft === 1 ? "" : "s"} left — each doubles one gameweek's points`
-                      : "Once per tournament: doubles one gameweek's points"
-                  }
+                  title="Once per tournament: doubles one gameweek's points"
                 >
                   <Zap className={cn("mr-1.5 size-4", chipStatus.chip && "animate-pulse text-amber-300")} />
                   {chipStatus.chip
@@ -580,11 +575,10 @@ export default function SquadBuilder() {
                     : "Play Double Down"}
                 </Button>
               )}
-              {chipStatus.extraChipsLeft > 0 && (
+              {chipStatus.chip && (
                 <Badge className="border border-amber-400/40 bg-amber-400/15 text-[10px] text-amber-300 uppercase">
                   <Zap className="mr-1 size-3" />
-                  {chipStatus.extraChipsLeft} extra chip
-                  {chipStatus.extraChipsLeft === 1 ? "" : "s"}
+                  Doubling this gameweek
                 </Badge>
               )}
               <Button variant="outline" onClick={handleShareTeam} title="Download a shareable squad card">
@@ -730,6 +724,7 @@ export default function SquadBuilder() {
                     // unlocked anything gets the standard green pitch.
                     theme={user?.activePitchTheme ?? "default"}
                     goldenJersey={user?.hasGoldenJersey === true}
+                    goldenBootKit={user?.hasEquippedKit === true}
                   />
                 </CardContent>
               </Card>

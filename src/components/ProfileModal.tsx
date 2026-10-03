@@ -40,6 +40,8 @@ export type ProfileCosmetics = {
   hasGoldenJersey?: boolean | null;
   hasProfileBorder?: boolean | null;
   hasCustomTitle?: boolean | null;
+  /** Earned cosmetic (Golden Boot): render the striker's kit skin. */
+  hasEquippedKit?: boolean | null;
 };
 
 /** What the modal needs about a manager. All fields optional by design. */
@@ -112,6 +114,8 @@ export function ProfileModal({
   const theme = normalizePitchTheme(subject?.activePitchTheme);
   const premium = isPremiumPitch(theme);
   const golden = subject?.hasGoldenJersey === true;
+  // Earned Golden Boot kit skin, on top of the plain gold jersey.
+  const bootKit = subject?.hasEquippedKit === true;
 
   // Props win; the live squad query fills the gaps. `??` everywhere so a
   // partial projection never yields `undefined`.
@@ -288,17 +292,22 @@ export function ProfileModal({
             ) : null}
             {border ? (
               <Badge className="border border-orange-400/40 bg-orange-400/10 text-[10px] text-orange-200 uppercase">
-                <Flame className="mr-1 size-3" /> Fire border
+                <Flame className="mr-1 size-3" /> Animated border
               </Badge>
             ) : null}
-            {/* Micro-transaction cosmetics unlocked. */}
+            {bootKit ? (
+              <Badge className="border border-amber-300/40 bg-amber-300/10 text-[10px] text-amber-200 uppercase">
+                <Crown className="mr-1 size-3" /> Golden Boot kit
+              </Badge>
+            ) : null}
+            {/* EARNED cosmetics unlocked — podium finishes and feats, never bought. */}
             {unlockedItems.length > 0 && (
               <Badge
                 variant="secondary"
                 className="text-[10px] uppercase"
-                title={unlockedItems.map((i) => i.itemId).join(", ")}
+                title={unlockedItems.map((i) => i.name).join(", ")}
               >
-                {unlockedItems.length} store item
+                {unlockedItems.length} cosmetic
                 {unlockedItems.length === 1 ? "" : "s"}
               </Badge>
             )}
@@ -399,6 +408,7 @@ export function ProfileModal({
               showFormationLabel
               theme={theme}
               goldenJersey={golden}
+              goldenBootKit={bootKit}
             />
             <div className="grid grid-cols-3 gap-2 text-center">
               <Stat label="Picked" value={`${picked}/7`} />

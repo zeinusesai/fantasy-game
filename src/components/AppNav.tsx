@@ -24,7 +24,7 @@ import {
   LogOut,
   Settings2,
   Shield,
-  ShoppingBag,
+  Sparkles,
   Sword,
   Trophy,
   Users,
@@ -41,7 +41,7 @@ const LINKS = [
   { to: "/squad", label: "My Squad", icon: Users },
   { to: "/tournament", label: "Tournament", icon: Trophy },
   { to: "/leaderboard", label: "Leaderboard", icon: BarChart3 },
-  { to: "/store", label: "Store", icon: ShoppingBag },
+  { to: "/hall-of-fame", label: "Hall of Fame", icon: Sparkles },
 ] as const;
 
 export function AppNav({ children }: { children: ReactNode }) {

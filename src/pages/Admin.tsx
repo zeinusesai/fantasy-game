@@ -42,12 +42,12 @@ import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
 import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
+import { PODIUM_SIZE, cosmeticById } from "@/convex/rewards";
 import {
   isKnockoutMatch,
   isKnockoutStage,
   validatePenaltyShootout,
 } from "@/convex/penalties";
-import { MAX_PRICE_AED } from "@/convex/storeItems";
 import type { PlayerStatusLabel } from "@/convex/schema";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges, BADGE_META, ASSIGNABLE_BADGE_KEYS } from "@/components/UserBadge";
@@ -64,16 +64,23 @@ type PhotoRequest = Doc<"photoRequests"> & {
   /** The player's live photo (null when already cleared / player deleted). */
   currentPhoto: string | null;
 };
-type Purchase = {
-  _id: Id<"purchases">;
-  username: string | null;
-  avatar: string | null;
-  itemId: string;
-  itemName: string;
-  priceAED: number;
-  status: "pending" | "approved" | "rejected";
-  createdAt: number;
-  decidedBy: string | null;
+/** One row of the Super Admin reward audit panel. */
+type RewardAudit = {
+  standings: Array<{
+    rank: number;
+    userId: string;
+    username: string;
+    teamName: string;
+    points: number;
+    isSuperAdmin: boolean;
+    awarded: boolean;
+    rolledIn: boolean;
+  }>;
+  rollDownApplied: boolean;
+  slotCount: number;
+  awards: Array<{ userId: string; cosmeticId: string; featId: string }>;
+  byCosmetic: Array<{ cosmeticId: string; name: string; holders: number }>;
+  feats: Array<{ featId: string; name: string; unlockedBy: number }>;
 };
 
 /** "12 Aug, 14:03" — locale-formatted, with a safe fallback for junk input. */
@@ -164,6 +171,7 @@ import {
   CheckCircle2,
   Crown,
   HandCoins,
+  RefreshCw,
   ImagePlus,
   Inbox,
   KeyRound,
@@ -219,40 +227,52 @@ export default function Admin() {
     (r) => r.status === "pending",
   ).length;
 
-  // ── Store micro-transactions (cash, hard 10 AED ceiling) ──
-  const purchasesResult = useQuery(api.transactions.listPurchases);
-  const approvePurchase = useMutation(api.transactions.approvePurchase);
-  const rejectPurchase = useMutation(api.transactions.rejectPurchase);
-  const purchases = purchasesResult ?? [];
-  const purchasesLoading = purchasesResult === undefined;
-  const pendingPurchaseCount = purchases.filter(
-    (r) => r.status === "pending",
-  ).length;
+  // ── Earned cosmetic rewards: audit + override ──
+  const rewardAudit = useQuery(api.rewardsEngine.getRewardAudit);
+  const runEvaluation = useMutation(api.rewardsEngine.runRewardEvaluation);
+  const overrideCosmetic = useMutation(api.rewardsEngine.overrideCosmetic);
+  const audit: RewardAudit | null = rewardAudit ?? null;
+  const auditLoading = rewardAudit === undefined;
+  const [runningEvaluation, setRunningEvaluation] = useState(false);
 
-  const handleApprovePurchase = async (purchaseId: Id<"purchases">) => {
+  /**
+   * Re-run the reward engine. This is an ENGINE, not a cheat: it applies the
+   * same public rules to the same data the managers' showcase shows, so it can
+   * only award something that had already been earned. It is idempotent.
+   */
+  const handleRunEvaluation = async () => {
+    setRunningEvaluation(true);
     try {
-      const result = await approvePurchase({ purchaseId });
+      const result = await runEvaluation({});
       toast.success(
-        result.granted
-          ? `Transaction approved! ${result.itemName} granted.`
-          : `Transaction approved — ${result.itemName} is no longer available to grant.`,
+        result.awardedCount === 0
+          ? "Reward engine ran — no new unlocks (everything earned is already granted)."
+          : `Reward engine ran — ${result.awardedCount} new unlock${
+              result.awardedCount === 1 ? "" : "s"
+            } awarded${result.rollDownApplied ? " (Super Admin roll-down applied)" : ""}.`,
       );
     } catch (err) {
-      // The server's idempotency guard arrives as a clean message here, so a
-      // double click reports honestly instead of silently failing.
       toast.error(
-        err instanceof Error ? err.message : "Could not approve the transaction.",
+        err instanceof Error ? err.message : "Could not run the reward engine.",
       );
+    } finally {
+      setRunningEvaluation(false);
     }
   };
 
-  const handleRejectPurchase = async (purchaseId: Id<"purchases">) => {
+  const handleOverride = async (
+    userId: string,
+    cosmeticId: string,
+    grant: boolean,
+  ) => {
     try {
-      const result = await rejectPurchase({ purchaseId });
-      toast.success(`${result.itemName} rejected — nothing was granted.`);
+      await overrideCosmetic({ userId: userId as Id<"users">, cosmeticId, grant });
+      toast.success(
+        grant ? "Cosmetic granted (recorded as an admin override)." : "Cosmetic revoked.",
+      );
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Could not reject the transaction.",
+        err instanceof Error ? err.message : "Could not apply the override.",
       );
     }
   };
@@ -353,9 +373,9 @@ export default function Admin() {
             <TabsTrigger value="players">Players</TabsTrigger>
             <TabsTrigger value="requests" className="gap-1.5">
               <Inbox className="size-3.5" /> Requests
-              {pendingCount + pendingPhotoCount + pendingPurchaseCount > 0 && (
+              {pendingCount + pendingPhotoCount > 0 && (
                 <Badge className="bg-amber-400/20 text-amber-300 border border-amber-400/40 px-1.5">
-                  {pendingCount + pendingPhotoCount + pendingPurchaseCount}
+                  {pendingCount + pendingPhotoCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -407,10 +427,11 @@ export default function Admin() {
               photoRequestsLoading={photoRequestsLoading}
               onReviewPhoto={handleReviewPhoto}
               isSuper={isSuper}
-              purchases={purchases}
-              purchasesLoading={purchasesLoading}
-              onApprovePurchase={handleApprovePurchase}
-              onRejectPurchase={handleRejectPurchase}
+              audit={audit}
+              auditLoading={auditLoading}
+              runningEvaluation={runningEvaluation}
+              onRunEvaluation={handleRunEvaluation}
+              onOverride={handleOverride}
             />
           </TabsContent>
           {isSuper && (
@@ -2337,10 +2358,11 @@ function RequestsTab({
   photoRequestsLoading,
   onReviewPhoto,
   isSuper,
-  purchases,
-  purchasesLoading,
-  onApprovePurchase,
-  onRejectPurchase,
+  audit,
+  auditLoading,
+  runningEvaluation,
+  onRunEvaluation,
+  onOverride,
 }: {
   requests: PriceRequest[];
   loading: boolean;
@@ -2360,10 +2382,11 @@ function RequestsTab({
     decision: "approve" | "deny",
   ) => void;
   isSuper: boolean;
-  purchases: Purchase[];
-  purchasesLoading: boolean;
-  onApprovePurchase: (purchaseId: Id<"purchases">) => void;
-  onRejectPurchase: (purchaseId: Id<"purchases">) => void;
+  audit: RewardAudit | null;
+  auditLoading: boolean;
+  runningEvaluation: boolean;
+  onRunEvaluation: () => void;
+  onOverride: (userId: string, cosmeticId: string, grant: boolean) => void;
 }) {
   const parsedAdjust = parseMoneyInput(adjustPrice);
   const adjustValid = parsedAdjust !== null && parsedAdjust >= 0;
@@ -2372,156 +2395,154 @@ function RequestsTab({
   const reviewed = requests.filter((r) => r.status !== "pending");
   const photoPending = photoRequests.filter((r) => r.status === "pending");
   const photoReviewed = photoRequests.filter((r) => r.status !== "pending");
-  const purchasePending = purchases.filter((r) => r.status === "pending");
-  const purchaseReviewed = purchases.filter((r) => r.status !== "pending");
+  const purchasePending: RewardAudit["standings"] = [];
+  const podiumWinners = (audit?.standings ?? []).filter((r) => r.rank > 0);
 
   return (
     <div className="space-y-4">
-      {/* ── Pending micro-transactions (store, manual cash, max 10 AED) ── */}
+      {/* ── Earned cosmetic rewards: GW1 podium, feat triggers, roll-down ── */}
       <Card className="border-border/80">
         <CardHeader>
           <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
-            <HandCoins className="text-primary size-4" /> Pending micro-transactions
-            {purchasePending.length > 0 && (
+            <Trophy className="text-primary size-4" /> Cosmetic rewards
+            {audit?.rollDownApplied && (
               <Badge className="border border-amber-400/40 bg-amber-400/20 px-1.5 text-[10px] text-amber-300">
-                {purchasePending.length}
+                roll-down active
               </Badge>
             )}
           </CardTitle>
           <CardDescription>
-            Managers pay you cash in person, then file a request. Approving flips
-            the transaction and grants the perk automatically. Hard ceiling:{" "}
-            <span className="text-foreground font-semibold">
-              {MAX_PRICE_AED} AED
-            </span>{" "}
-            per item.
+            Every cosmetic is EARNED — podium finishes and in-game feats only.
+            There is no store, no currency and no purchase queue. Running the
+            engine re-applies the public rules to the live data; it can only
+            award something a manager had already earned.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          {purchasesLoading ? (
-            <p className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-sm">
-              <Loader2 className="size-4 animate-spin" /> Loading transactions…
-            </p>
-          ) : purchasePending.length === 0 ? (
-            <p className="text-muted-foreground py-8 text-center text-sm">
-              No pending transactions right now.
+        <CardContent className="space-y-4">
+          <Button
+            size="sm"
+            disabled={!isSuper || runningEvaluation}
+            onClick={onRunEvaluation}
+          >
+            {runningEvaluation ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1.5 size-3.5" />
+            )}
+            Run reward engine
+          </Button>
+
+          {auditLoading ? (
+            <p className="text-muted-foreground flex items-center justify-center gap-2 py-6 text-sm">
+              <Loader2 className="size-4 animate-spin" /> Loading reward audit…
             </p>
           ) : (
-            <div className="space-y-3">
-              {purchasePending.map((p) => (
-                <div
-                  key={p._id}
-                  className="rounded-xl border border-border/70 bg-secondary/40 p-4"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <AdminAvatar username={p.username} image={p.avatar} />
-                      <div className="min-w-0">
-                        <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                          <span>@{p.username || "unknown"}</span>
-                          <span className="text-muted-foreground font-normal">
-                            wants
-                          </span>
-                          <span className="text-primary">{p.itemName}</span>
-                        </p>
-                        <p className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-score font-bold text-foreground">
-                            {p.priceAED} AED
-                          </span>
-                          <span>· requested {formatWhen(p.createdAt)}</span>
-                        </p>
-                      </div>
+            <>
+              {/* ── Feat triggers ── */}
+              <div>
+                <p className="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-widest">
+                  Feat triggers
+                </p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {(audit?.feats ?? []).map((f) => (
+                    <div
+                      key={f.featId}
+                      className="flex items-center justify-between rounded-lg border border-border/60 bg-secondary/30 px-3 py-2 text-xs"
+                    >
+                      <span className="font-medium">{f.name}</span>
+                      <span className="text-muted-foreground">
+                        {f.unlockedBy} unlocked
+                      </span>
                     </div>
-                    <Badge
-                      variant="secondary"
-                      className="border border-amber-400/40 bg-amber-400/15 text-[10px] text-amber-300 uppercase"
-                    >
-                      pending
-                    </Badge>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      disabled={!isSuper}
-                      title={
-                        isSuper
-                          ? "Confirm cash received and grant the item"
-                          : "Only the Super Admin can approve purchases"
-                      }
-                      onClick={() => onApprovePurchase(p._id)}
-                    >
-                      <CheckCircle2 className="mr-1.5 size-3.5" /> Accept &amp; grant
-                      item
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      disabled={!isSuper}
-                      title={
-                        isSuper
-                          ? "Reject — no items or stats change"
-                          : "Only the Super Admin can reject purchases"
-                      }
-                      onClick={() => onRejectPurchase(p._id)}
-                    >
-                      <XCircle className="mr-1.5 size-3.5" /> Reject request
-                    </Button>
-                  </div>
-                  {!isSuper && (
-                    <p className="text-muted-foreground mt-2 text-[11px]">
-                      Waiting on the Super Admin (Zein) to confirm the cash.
-                    </p>
-                  )}
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+
+              {/* ── GW1 standings + roll-down ── */}
+              <div>
+                <p className="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-widest">
+                  Gameweek 1 standings{" "}
+                  {audit?.rollDownApplied
+                    ? `(roll-down applied — ${audit.slotCount} places awarded)`
+                    : `(${audit?.slotCount ?? PODIUM_SIZE} places awarded)`}
+                </p>
+                {podiumWinners.length === 0 ? (
+                  <p className="text-muted-foreground py-4 text-center text-sm">
+                    No gameweek has been scored yet — no podium to allocate.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {podiumWinners.map((row) => (
+                      <div
+                        key={row.userId}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
+                      >
+                        <p className="flex flex-wrap items-center gap-2 text-sm">
+                          <span className="text-muted-foreground font-score w-6 text-xs">
+                            #{row.rank}
+                          </span>
+                          <span className="font-semibold">
+                            @{row.username}
+                          </span>
+                          {row.isSuperAdmin && (
+                            <Badge className="border border-violet-400/40 bg-violet-400/15 text-[10px] text-violet-200 uppercase">
+                              Super Admin
+                            </Badge>
+                          )}
+                          {row.rolledIn && (
+                            <Badge className="border border-amber-400/40 bg-amber-400/15 text-[10px] text-amber-300 uppercase">
+                              rolled in
+                            </Badge>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="font-score text-xs font-bold">
+                            {row.points} pts
+                          </span>
+                          <Badge
+                            className={
+                              row.awarded
+                                ? "border border-emerald-400/40 bg-emerald-400/15 text-[10px] text-emerald-300 uppercase"
+                                : "text-[10px] uppercase"
+                            }
+                          >
+                            {row.awarded ? "awarded" : "pending"}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-muted-foreground mt-2 text-[11px]">
+                  The Super Admin competes and ranks like every other manager.
+                  If they finish in the top {PODIUM_SIZE}, they take the podium
+                  items and 4th place is rolled in so no place goes unallocated.
+                </p>
+              </div>
+
+              {/* ── Awarded cosmetics ── */}
+              <div>
+                <p className="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-widest">
+                  Awarded cosmetics
+                </p>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {(audit?.byCosmetic ?? []).map((c) => (
+                    <div
+                      key={c.cosmeticId}
+                      className="flex items-center justify-between rounded-lg border border-border/60 bg-secondary/30 px-3 py-2 text-xs"
+                    >
+                      <span className="font-medium">{c.name}</span>
+                      <span className="text-muted-foreground">
+                        {c.holders} holder{c.holders === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
-
-      {purchaseReviewed.length > 0 && (
-        <Card className="border-border/80">
-          <CardHeader>
-            <CardTitle className="font-display text-sm font-bold uppercase tracking-widest">
-              Transactions settled
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {purchaseReviewed.slice(0, 25).map((p) => (
-              <div
-                key={p._id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
-              >
-                <p className="text-sm">
-                  <span className="font-semibold">{p.itemName}</span>
-                  <span className="text-muted-foreground">
-                    {" "}
-                    for @{p.username || "unknown"}
-                  </span>
-                </p>
-                <div className="flex items-center gap-2">
-                  <span className="font-score text-xs font-bold">{p.priceAED} AED</span>
-                  <Badge
-                    className={
-                      p.status === "approved"
-                        ? "border border-emerald-400/40 bg-emerald-400/15 text-[10px] text-emerald-300 uppercase"
-                        : "text-[10px] uppercase"
-                    }
-                  >
-                    {p.status}
-                  </Badge>
-                  {p.decidedBy ? (
-                    <span className="text-muted-foreground text-[11px]">
-                      by {p.decidedBy}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
 
       {/* ── Photo removal requests (manager-reported, Super Admin decides) ── */}
       <Card className="border-border/80">

@@ -221,6 +221,25 @@ export function isCosmeticId(id: unknown): id is CosmeticId {
   return cosmeticById(id) !== null;
 }
 
+/**
+ * Emoji shown beside a manager's name for an equipped BADGE cosmetic.
+ *
+ * Kept here (not in a component) so the leaderboard, the profile modal and the
+ * showcase can never disagree about which symbol a badge is. TOTAL — an
+ * unknown id falls back to a neutral trophy rather than rendering nothing, so
+ * an earned badge is never invisible.
+ */
+const BADGE_EMOJI: Record<string, string> = {
+  pacesetter_badge: "\u{1F451}",
+  bargain_hunter_badge: "\u{1F9F8}",
+};
+
+export function cosmeticEmoji(id: unknown): string {
+  const def = cosmeticById(id);
+  if (def && def.slot === "badge") return BADGE_EMOJI[def.id] ?? "\u{1F3C6}";
+  return "\u{1F3C6}";
+}
+
 /** Every cosmetic that fills one slot. */
 export function cosmeticsForSlot(slot: unknown): CosmeticDef[] {
   if (typeof slot !== "string") return [];
