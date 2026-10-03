@@ -243,28 +243,27 @@ export const getLeaderboard = query({
     const users = await ctx.db.query("users").collect();
     const byId = new Map(users.map((u) => [u._id, u]));
 
-    // Store cosmetics shown next to a manager's name. Collected once so the
+    // EQUIPPED cosmetics shown next to a manager's name. Collected once so the
     // loop stays a single pass; a missing table degrades to an empty set.
+    //
+    // Note the Super Admin is NO LONGER auto-granted everything: they compete
+    // for and earn cosmetics exactly like every other manager, so a badge or
+    // border beside their name always means they actually earned it.
     const borderOwners = new Set<string>();
     const titleOwners = new Set<string>();
     try {
-      const ents = await ctx.db.query("storeEntitlements").collect();
-      for (const e of ents) {
-        if (e.enabled !== true) continue; // switched-off perks don't show
-        if (e.itemId === "profile_border") borderOwners.add(String(e.userId));
-        if (e.itemId === "custom_title") titleOwners.add(String(e.userId));
-      }
-    } catch {
-      // no entitlements yet — every manager simply renders without cosmetics
-    }
-    // The Super Admin auto-owns every cosmetic.
-    if (byId.size > 0) {
-      for (const u of users) {
-        if (u.role === "super_admin") {
-          borderOwners.add(String(u._id));
-          titleOwners.add(String(u._id));
+      const unlocks = await ctx.db.query("cosmeticUnlocks").collect();
+      for (const u of unlocks) {
+        if (u.equipped !== true) continue; // only EQUIPPED cosmetics render
+        if (u.cosmeticId === "profile_border" || u.cosmeticId === "gw1_podium_border") {
+          borderOwners.add(String(u.userId));
+        }
+        if (u.cosmeticId === "custom_title" || u.cosmeticId === "clutch_performer_title") {
+          titleOwners.add(String(u.userId));
         }
       }
+    } catch {
+      // no unlocks yet — every manager simply renders without cosmetics
     }
 
     const out = [];

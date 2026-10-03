@@ -71,12 +71,17 @@ export const requestStatusValidator = v.union(
 );
 export type RequestStatus = Infer<typeof requestStatusValidator>;
 
-// status values for the manual-cash store micro-transactions.
-export const PURCHASE_STATUSES = ["pending", "approved", "rejected"] as const;
-export const purchaseStatusValidator = v.union(
-  ...PURCHASE_STATUSES.map((s) => v.literal(s)),
+// ── Earned cosmetic rewards ────────────────────────────────────────────
+//
+// The manual-cash store is GONE: there is no `purchases` table, no price, no
+// currency and no queue. Every cosmetic is earned through a gameweek podium or
+// an in-game feat (see convex/rewards.ts). "Who granted it" is kept for audit
+// so an admin override is always traceable.
+export const COSMETIC_GRANT_VIAS = ["earned", "super_admin", "admin_grant"] as const;
+export const cosmeticGrantViaValidator = v.union(
+  ...COSMETIC_GRANT_VIAS.map((s) => v.literal(s)),
 );
-export type PurchaseStatus = Infer<typeof purchaseStatusValidator>;
+export type CosmeticGrantVia = Infer<typeof cosmeticGrantViaValidator>;
 
 const schema = defineSchema(
   {
@@ -114,9 +119,6 @@ const schema = defineSchema(
       // a stored value can never become an arbitrary link.
       instagram: v.optional(v.string()),
       tiktok: v.optional(v.string()),
-      // Extra single-use "Double Down" chips bought in the store (on top of
-      // the free tournament chip). Always clamped to >= 0 server-side.
-      extraChips: v.optional(v.number()),
       favoritePlayerId: v.optional(v.string()), // id of the user's favorite player (N/A if unset)
       // The house this manager SUPPORTS — a purely cosmetic, MANUAL
       // preference chosen from the profile settings panel.
@@ -134,7 +136,11 @@ const schema = defineSchema(
       supportedHouse: v.optional(houseValidator),
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
-      .index("by_username", ["username"]),
+      .index("by_username", ["username"])
+      // Used by the reward engine to resolve the Super Admin account for the
+      // GW1 podium roll-down rule. The Super Admin competes and ranks like
+      // every other manager — this index just finds them cheaply.
+      .index("by_role", ["role"]),
 
     // ===== Platform config (single row, singleton) =====
     config: defineTable({
@@ -172,11 +178,12 @@ const schema = defineSchema(
       // infer their shape from the selected players).
       formation: v.optional(v.string()),
       // One-time "Double Down" chip: armed for gw1 or gw2, consumed at settle.
+      //
+      // EVERY MANAGER GETS EXACTLY ONE, for the whole tournament. There is no
+      // way to buy more: the extra-chip store item has been deleted, so the
+      // chip allocation is strictly equal and fair across all managers.
       activeChip: v.optional(v.string()),
       chipUsed: v.optional(v.boolean()),
-      // How many store-bought extra chips this squad has already burned. The
-      // free tournament chip is tracked separately via `chipUsed`.
-      extraChipsUsed: v.optional(v.number()),
     }).index("by_user", ["userId"]),
 
     // ===== Gameweek management (deadlines, locks, settle state) =====
@@ -400,29 +407,7 @@ const schema = defineSchema(
     })
       .index("by_status", ["status"])
       .index("by_player", ["playerId"])
-      .index("by_user", ["userId"]),
-
-    // ===== Store micro-transactions (manual cash, hard 10 AED ceiling) =====
-// Every row is one manager -> one catalogue item -> one Super-Admin decision.
-// `priceAED` is denormalized from the catalogue at request time so the admin
-// queue still shows what was agreed even if the catalogue price changes later.
-    purchases: defineTable({
-      userId: v.id("users"),
-      username: v.optional(v.string()),
-      itemId: v.string(), // StoreItemId from storeItems.ts
-      itemName: v.string(), // denormalized for the queue + activity feed
-      priceAED: v.number(), // 1..10 AED — server rejects anything above 10
-      status: purchaseStatusValidator, // "pending" | "approved" | "rejected"
-      createdAt: v.number(), // epoch ms
-      decidedBy: v.optional(v.string()),
-      decidedAt: v.optional(v.number()),
-      note: v.optional(v.string()), // optional admin note / rejection reason
-    })
-      .index("by_status", ["status"])
-      .index("by_user", ["userId"])
-      .index("by_user_item", ["userId", "itemId"]),
-
-    // ===== In-app direct messages between managers =====
+      .index("by_user", ["userId"]),// ===== In-app direct messages between managers =====
 // One row per message. Threads are derived by querying both directions
     // (sender→recipient and recipient→sender), so there is no separate
     // conversation row to keep in sync.
@@ -439,22 +424,32 @@ const schema = defineSchema(
       .index("by_recipient_read", ["recipientId", "isRead"])
       .index("by_pair", ["senderId", "recipientId"]),
 
-    // ===== Granted store perks, one row per user + item =====
-// The single source of truth for "does this manager own this perk, and is it
-    // switched on?". The Super Admin auto-owns every item via
-    // `via: "super_admin"`; purchased items use `via: "purchase"`.
-    storeEntitlements: defineTable({
+    // ===== Earned cosmetics, one row per user + cosmetic =====
+// The single source of truth for "has this manager unlocked this cosmetic,
+// is it equipped, and WHY did they earn it?". Nothing here can be bought —
+// rows are written only by the reward engine (convex/rewards.server.ts) or by
+// a Super Admin override.
+//
+// `via` is kept for audit so a manual admin grant is always distinguishable
+// from a feat-earned unlock.
+    cosmeticUnlocks: defineTable({
       userId: v.id("users"),
-      itemId: v.string(), // StoreItemId from storeItems.ts
-      grantedAt: v.number(), // epoch ms
-      grantedBy: v.optional(v.string()), // who granted it (admin username)
-      via: v.union(v.literal("purchase"), v.literal("super_admin")),
-      // Cosmetic toggles. Non-toggleable items (chips, budget) are stored as
-      // `true` and never flipped.
-      enabled: v.optional(v.boolean()),
+      cosmeticId: v.string(), // CosmeticId from rewards.ts
+      unlockedAt: v.number(), // epoch ms
+      unlockedBy: v.optional(v.string()), // username that granted it
+      via: cosmeticGrantViaValidator, // earned | super_admin | admin_grant
+      // The feat id that earned it (e.g. "golden_boot"). Absent for a manual
+      // admin grant or a legacy unlock.
+      featId: v.optional(v.string()),
+      // The gameweek it was earned in (1 | 2). The GW1 podium sets 1.
+      gameweek: v.optional(v.number()),
+      // Only ONE cosmetic per slot may be equipped at a time; the server
+      // clears the previous holder of the same slot on equip.
+      equipped: v.optional(v.boolean()),
     })
       .index("by_user", ["userId"])
-      .index("by_user_item", ["userId", "itemId"]),
+      .index("by_user_cosmetic", ["userId", "cosmeticId"])
+      .index("by_cosmetic", ["cosmeticId"]),
 
     // ===== System-level flags + Super Admin customization (singleton row) =====
     // One row holds every global setting Zein can edit. Every field is

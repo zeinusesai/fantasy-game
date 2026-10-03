@@ -764,8 +764,6 @@ export const getMyChip = query({
       chip: null,
       used: false,
       available: false,
-      extraChips: 0,
-      extraChipsLeft: 0,
     };
     try {
       const userId = await getAuthUserId(ctx);
@@ -775,28 +773,15 @@ export const getMyChip = query({
       const armed = typeof squad.activeChip === "string" ? squad.activeChip : null;
       const used = squad.chipUsed === true;
 
-      // Store-bought extra chips (see transactions.approvePurchase). Defensive
-      // on every field: a missing squad/user row just means "no extras".
-      const user = await ctx.db.get(userId);
-      const ownedExtra =
-        typeof user?.extraChips === "number" && Number.isFinite(user.extraChips)
-          ? Math.max(0, Math.floor(user.extraChips))
-          : 0;
-      const burnedExtra =
-        typeof squad.extraChipsUsed === "number" &&
-        Number.isFinite(squad.extraChipsUsed)
-          ? Math.max(0, Math.floor(squad.extraChipsUsed))
-          : 0;
-      const extraChipsLeft = Math.max(0, ownedExtra - burnedExtra);
-      // Free tournament chip + any unspent extra chips = how many are left.
-      const chipsLeft = (used ? 0 : 1) + extraChipsLeft;
+      // EXACTLY ONE chip per manager, for the whole tournament. The
+      // extra-chip store item no longer exists, so there is no purchased
+      // allowance to read and the allocation is equal for everyone.
+      const chipsLeft = used ? 0 : 1;
 
       return {
         chip: armed,
         used,
         available: armed === null && chipsLeft > 0,
-        extraChips: ownedExtra,
-        extraChipsLeft,
       };
     } catch {
       return empty;

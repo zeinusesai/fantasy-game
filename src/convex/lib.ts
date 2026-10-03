@@ -3,6 +3,7 @@ import { internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { DEFAULT_CONFIG, CONFIG_KEYS, FIXED_MANAGER_BUDGET } from "./configDefaults";
+import { cosmeticById } from "./rewards";
 import {
   DEFAULT_PITCH_THEME,
   PREMIUM_PITCH_THEME,
@@ -24,13 +25,13 @@ export const getUserIdByUsername = internalQuery({
 export type PlatformUser = Doc<"users">;
 
 /**
- * Store cosmetics a manager currently has switched ON, for rendering their
+ * Earned cosmetics a manager currently has EQUIPPED, for rendering their
  * pitch / jersey anywhere it is inspected (own profile, Dashboard, Leaderboard
  * rival inspector, ProfileModal).
  *
- * Derived from `storeEntitlements`, which is the single source of truth for
- * store perks, so a grant or a toggle updates every client reactively. The
- * Super Admin auto-owns every cosmetic.
+ * Derived from `cosmeticUnlocks`, which is the single source of truth for
+ * earned rewards, so earning a feat or equipping a different item updates every
+ * client reactively.
  *
  * TOTAL: any failure — missing table, corrupt row, db hiccup — degrades to
  * "no cosmetics" instead of throwing, so a cosmetic lookup can never crash a
@@ -42,28 +43,35 @@ export async function readUserCosmetics(ctx: QueryCtx, user: Doc<"users">) {
     hasGoldenJersey: false,
     hasProfileBorder: false,
     hasCustomTitle: false,
+    hasEquippedKit: false,
+    hasNameGlow: false,
+    equippedBadgeId: null as string | null,
   } as const;
-  if (user.role === "super_admin") {
-    return {
-      activePitchTheme: PREMIUM_PITCH_THEME,
-      hasGoldenJersey: true,
-      hasProfileBorder: true,
-      hasCustomTitle: true,
-    } as const;
-  }
   try {
     const rows = await ctx.db
-      .query("storeEntitlements")
+      .query("cosmeticUnlocks")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .collect();
-    const enabled = (itemId: string) =>
-      rows.some((r) => r.itemId === itemId && r.enabled === true);
-    const premium = enabled(THEME_ITEM_ID);
+    const equipped = rows.filter((r) => r.equipped === true);
+    const has = (id: string) => equipped.some((r) => r.cosmeticId === id);
+
+    // The gold pitch/jersey reads from EITHER the legacy `golden_theme` or the
+    // feat-earned `tactical_mastermind_pitch`, so a manager who earned the
+    // rarer skin keeps the premium aesthetic without losing it.
+    const premiumPitch = has(THEME_ITEM_ID) || has("tactical_mastermind_pitch");
+    const equippedBadge = equipped.find(
+      (r) => cosmeticById(r.cosmeticId)?.slot === "badge",
+    );
+
     return {
-      activePitchTheme: premium ? PREMIUM_PITCH_THEME : DEFAULT_PITCH_THEME,
-      hasGoldenJersey: premium,
-      hasProfileBorder: enabled("profile_border"),
-      hasCustomTitle: enabled("custom_title"),
+      activePitchTheme: premiumPitch ? PREMIUM_PITCH_THEME : DEFAULT_PITCH_THEME,
+      hasGoldenJersey: premiumPitch,
+      // Any equipped border (legacy or the GW1 podium border) shows a frame.
+      hasProfileBorder: has("profile_border") || has("gw1_podium_border"),
+      hasCustomTitle: has("custom_title") || has("clutch_performer_title"),
+      hasEquippedKit: has("golden_boot_kit"),
+      hasNameGlow: has("iron_defence_glow"),
+      equippedBadgeId: equippedBadge?.cosmeticId ?? null,
     };
   } catch {
     return none;

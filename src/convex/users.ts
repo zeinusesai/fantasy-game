@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { readUserCosmetics, requireUser } from "./lib";
 import { getLeaderboardRows } from "./lib";
 import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle, normalizeHouse } from "./defaults";
+import { cosmeticById } from "./rewards";
 import { HOUSES, type House } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -34,13 +35,12 @@ export const currentUser = query({
       hasGoldenJersey: cosmetics.hasGoldenJersey,
       hasProfileBorder: cosmetics.hasProfileBorder,
       hasCustomTitle: cosmetics.hasCustomTitle,
+      hasEquippedKit: cosmetics.hasEquippedKit,
+      hasNameGlow: cosmetics.hasNameGlow,
+      equippedBadgeId: cosmetics.equippedBadgeId,
       // Denormalized conveniences so the Profile / Store pages can render
       // without a second query. `?? ""` keeps them safe empty values.
       customTitle: user.customTitle ?? "",
-      extraChips:
-        typeof user.extraChips === "number" && Number.isFinite(user.extraChips)
-          ? user.extraChips
-          : 0,
       // Social handles — normalised WITHOUT the "@" by updateProfile, and
       // re-cleaned here so a hand-edited row can never put a scheme or a
       // script into the public profile card.
@@ -127,16 +127,24 @@ export const getPublicProfile = query({
         }
       }
 
-      // ── Cosmetics purchased in the store (the showcase chips). ──
-      let unlockedItems: Array<{ itemId: string; name: string; priceAED: number }> = [];
+      // ── EARNED cosmetics (the showcase chips). ──
+      // Nothing here is bought: every row was written by the reward engine
+      // or by a Super Admin override.
+      let unlockedItems: Array<{
+        cosmeticId: string;
+        name: string;
+        featId: string | null;
+      }> = [];
       try {
         const rows = await ctx.db
-          .query("storeEntitlements")
+          .query("cosmeticUnlocks")
           .withIndex("by_user", (q) => q.eq("userId", userId))
           .collect();
-        unlockedItems = rows
-          .filter((r) => r.enabled === true)
-          .map((r) => ({ itemId: r.itemId, name: r.itemId, priceAED: 0 }));
+        unlockedItems = rows.map((r) => ({
+          cosmeticId: String(r.cosmeticId),
+          name: cosmeticById(r.cosmeticId)?.name ?? String(r.cosmeticId),
+          featId: r.featId ?? null,
+        }));
       } catch {
         unlockedItems = [];
       }

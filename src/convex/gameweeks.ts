@@ -237,20 +237,12 @@ export const activateChip = mutation({
       const reason = await getStageLockReason(ctx, stage);
       if (reason) throw new Error(reason);
 
-      // Every manager gets ONE free tournament chip, plus any store-bought
-      // extra chips. `extraChipsUsed` counts only the bought ones, so a
-      // manager who burns a free chip can still use a purchased one.
-      const extraChips =
-        typeof user.extraChips === "number" && Number.isFinite(user.extraChips)
-          ? Math.max(0, Math.floor(user.extraChips))
-          : 0;
-      const extraUsed =
-        typeof squad.extraChipsUsed === "number" &&
-        Number.isFinite(squad.extraChipsUsed)
-          ? Math.max(0, Math.floor(squad.extraChipsUsed))
-          : 0;
+      // EVERY MANAGER GETS EXACTLY ONE chip for the whole tournament.
+      //
+      // The extra-chip store item has been deleted, so there is no purchased
+      // allowance to read: `squad.chipUsed` is the single source of truth and
+      // the allocation is therefore strictly equal for all managers.
       const freeRemaining = squad.chipUsed === true ? 0 : 1;
-      const extraRemaining = Math.max(0, extraChips - extraUsed);
 
       // An armed chip blocks arming again (one multiplier at a time).
       if (squad.activeChip) {
@@ -258,20 +250,15 @@ export const activateChip = mutation({
           "You already have a Double Down chip armed for a gameweek.",
         );
       }
-      if (freeRemaining === 0 && extraRemaining === 0) {
+      if (freeRemaining === 0) {
         throw new Error(
-          extraChips > 0
-            ? "You've used every Double Down chip you have."
-            : "You have already used your one Double Down chip this tournament.",
+          "You have already used your one Double Down chip this tournament.",
         );
       }
 
-      // Consume a free chip when one is left, otherwise burn an extra one.
-      const usingFree = freeRemaining === 1;
       await ctx.db.patch(squad._id, {
         activeChip: chip,
-        chipUsed: usingFree,
-        ...(usingFree ? {} : { extraChipsUsed: extraUsed + 1 }),
+        chipUsed: true,
       });
 
       // Activity feed entry (defensive: never blocks the activation).
@@ -376,6 +363,16 @@ export const settleGameweek = mutation({
           await ctx.db.patch(score._id, { points: (Number(score.points) || 0) * 2 });
         }
         await ctx.db.patch(squad._id, { chipUsed: true, activeChip: undefined });
+        // A settlement is the natural moment to re-check the reward engine:
+        // the gameweek has just been scored, so any feat that just became true
+        // is awarded now. Best-effort and fire-and-forget — a reward hiccup
+        // must never roll back the score that triggered it. The Super Admin
+        // can also run it manually from the audit panel.
+        try {
+          await ctx.runMutation(internal.rewardsServer.evaluateRewardsInternal, {});
+        } catch {
+          // Non-fatal.
+        }
         try {
           const owner = await ctx.db.get(squad.userId);
           await ctx.runMutation(internal.activity.logActivity, {
