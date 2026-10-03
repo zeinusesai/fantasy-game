@@ -25,11 +25,13 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { PageLoading } from "@/components/PageLoading";
 import { toast } from "sonner";
-import { Camera, Crown, Flame, Loader2, Save, Star, Zap } from "lucide-react";
+import { Camera, Crown, Flame, Loader2, Save, Sparkles, Star, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 
 export default function Profile() {
   const { user, isLoading: authLoading } = useAuth();
+  const navigate = useNavigate();
   const mySquadResult = useQuery(api.squads.getMySquad);
   // EARNED cosmetics (Hall of Fame) + the "Custom Manager Title" editor
   // (server-gated on having earned a title cosmetic).
@@ -303,6 +305,16 @@ export default function Profile() {
               <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest">
                 <Crown className="text-primary size-3.5" /> My earned cosmetics
               </p>
+              {/* The full inventory + feat progress lives on its own screen;
+                  this is the entry point from the profile. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => navigate("/hall-of-fame")}
+              >
+                <Sparkles className="mr-1.5 size-3.5" /> Open Hall of Fame
+              </Button>
               {(showcase?.unlocked ?? []).length === 0 ? (
                 <p className="text-muted-foreground text-xs">
                   Nothing unlocked yet. Win a Gameweek podium or hit an in-game

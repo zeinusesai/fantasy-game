@@ -42,7 +42,7 @@ import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
 import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
-import { PODIUM_SIZE, cosmeticById } from "@/convex/rewards";
+import { PODIUM_SIZE } from "@/convex/rewards";
 import {
   isKnockoutMatch,
   isKnockoutStage,
@@ -82,22 +82,6 @@ type RewardAudit = {
   byCosmetic: Array<{ cosmeticId: string; name: string; holders: number }>;
   feats: Array<{ featId: string; name: string; unlockedBy: number }>;
 };
-
-/** "12 Aug, 14:03" — locale-formatted, with a safe fallback for junk input. */
-function formatWhen(ts: unknown): string {
-  const n = typeof ts === "number" ? ts : Number(ts);
-  if (!Number.isFinite(n) || n <= 0) return "unknown time";
-  try {
-    return new Date(n).toLocaleString(undefined, {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "unknown time";
-  }
-}
 
 // ── Shared safe-avatar + player-photo helpers ───────────────────────────
 
@@ -170,7 +154,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Crown,
-  HandCoins,
   RefreshCw,
   ImagePlus,
   Inbox,
@@ -2395,8 +2378,9 @@ function RequestsTab({
   const reviewed = requests.filter((r) => r.status !== "pending");
   const photoPending = photoRequests.filter((r) => r.status === "pending");
   const photoReviewed = photoRequests.filter((r) => r.status !== "pending");
-  const purchasePending: RewardAudit["standings"] = [];
   const podiumWinners = (audit?.standings ?? []).filter((r) => r.rank > 0);
+  // Which cosmetic the override controls are currently acting on.
+  const [overrideCosmeticId, setOverrideCosmeticId] = useState("");
 
   return (
     <div className="space-y-4">
@@ -2538,6 +2522,96 @@ function RequestsTab({
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* ── Override ──
+                  The escape hatch for a data-entry problem: a match result
+                  was entered wrong, so a feat that was genuinely earned never
+                  fired. Every override is recorded as `admin_grant` (or
+                  removed) and written to the audit log, so it is always
+                  distinguishable from an earned unlock. */}
+              <div>
+                <p className="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-widest">
+                  Override
+                </p>
+                <p className="text-muted-foreground mb-2 text-[11px]">
+                  Pick a cosmetic, then grant or revoke it for a manager. Use
+                  this only to correct bad match data — the reward engine
+                  should award everything that was genuinely earned on its own.
+                </p>
+
+                <Select value={overrideCosmeticId} onValueChange={setOverrideCosmeticId}>
+                  <SelectTrigger
+                    aria-label="Cosmetic to override"
+                    className="w-full sm:w-72"
+                  >
+                    <SelectValue placeholder="Choose a cosmetic…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(audit?.byCosmetic ?? []).map((c) => (
+                      <SelectItem key={c.cosmeticId} value={c.cosmeticId}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {overrideCosmeticId && (audit?.standings ?? []).length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    {(audit?.standings ?? []).map((row) => {
+                      const held = (audit?.awards ?? []).some(
+                        (a) =>
+                          a.userId === row.userId &&
+                          a.cosmeticId === overrideCosmeticId,
+                      );
+                      return (
+                        <div
+                          key={row.userId}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-secondary/30 px-3 py-2"
+                        >
+                          <p className="flex flex-wrap items-center gap-2 text-sm">
+                            <span className="font-semibold">
+                              @{row.username}
+                            </span>
+                            <span className="text-muted-foreground text-xs">
+                              {row.teamName}
+                            </span>
+                            {held ? (
+                              <Badge className="border border-emerald-400/40 bg-emerald-400/15 text-[10px] text-emerald-300 uppercase">
+                                holds it
+                              </Badge>
+                            ) : null}
+                          </p>
+                          <Button
+                            size="sm"
+                            variant={held ? "outline" : "default"}
+                            disabled={!isSuper}
+                            title={
+                              isSuper
+                                ? held
+                                  ? "Remove this cosmetic from the manager"
+                                  : "Grant this cosmetic to the manager"
+                                : "Only the Super Admin can override cosmetics"
+                            }
+                            onClick={() =>
+                              onOverride(row.userId, overrideCosmeticId, !held)
+                            }
+                          >
+                            {held ? (
+                              <>
+                                <XCircle className="mr-1.5 size-3.5" /> Revoke
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="mr-1.5 size-3.5" /> Grant
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}
