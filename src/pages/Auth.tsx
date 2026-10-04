@@ -59,6 +59,37 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     if (!authLoading && isAuthenticated) navigate(redirect, { replace: true });
   }, [authLoading, isAuthenticated, navigate, redirect]);
 
+  /**
+   * Zero-error safeguard: a Convex auth call normally settles in well under a
+   * second. When the backend is unreachable the client keeps retrying its
+   * websocket and the promise NEVER settles, so the submit handler never
+   * reaches its `catch` — the button used to spin forever with no message at
+   * all. This bounds the wait and surfaces an explicit connectivity error
+   * instead, leaving the form usable so the user can retry the moment the
+   * backend is back.
+   */
+  const AUTH_TIMEOUT_MS = 15000;
+  const withAuthTimeout = <T,>(pending: Promise<T>): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            "Can't reach the server right now — your details were not submitted. Check your connection and try again in a moment.",
+          ),
+        );
+      }, AUTH_TIMEOUT_MS);
+      pending.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsLoading(true);
@@ -69,19 +100,23 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
         if (taken) throw new Error("That username is already taken.");
         if (password.length < 4) throw new Error("Password must be at least 4 characters.");
         if (teamName.trim().length < 2) throw new Error("Team name must be at least 2 characters.");
-        await signIn("password", {
-          flow: "signUp",
-          username: username.trim(),
-          password,
-          teamName: teamName.trim(),
-          avatar,
-        });
+        await withAuthTimeout(
+          signIn("password", {
+            flow: "signUp",
+            username: username.trim(),
+            password,
+            teamName: teamName.trim(),
+            avatar,
+          }),
+        );
       } else {
-        await signIn("password", {
-          flow: "signIn",
-          username: username.trim(),
-          password,
-        });
+        await withAuthTimeout(
+          signIn("password", {
+            flow: "signIn",
+            username: username.trim(),
+            password,
+          }),
+        );
       }
       navigate(redirect, { replace: true });
     } catch (err) {
@@ -103,6 +138,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       // Keep the form fully usable after a failure — clear only the password
       // so a typo can be corrected without retyping the username.
       setPassword("");
+    } finally {
+      // Always re-enable the button, whatever the outcome (success navigates
+      // away, failure shows a message, timeout reports connectivity).
       setIsLoading(false);
     }
   };

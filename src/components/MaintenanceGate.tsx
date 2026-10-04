@@ -74,5 +74,20 @@ export function MaintenanceGate({ children }: { children: ReactNode }) {
     return <MaintenanceScreen />;
   }
 
+  // Backend still unreachable after the grace window: render the app (above)
+  // but say so plainly. Sign-in and live data cannot work without the server,
+  // so an explicit status bar beats an app that just looks broken.
+  if (graceOver && statusResult === undefined) {
+    return (
+      <>
+        <div className="flex items-center justify-center gap-2 border-b border-amber-400/30 bg-amber-400/10 px-4 py-2 text-center text-xs font-semibold text-amber-200">
+          <Loader2 className="size-3.5 shrink-0 animate-spin" />
+          Connecting to the server… sign-in and live scores resume automatically.
+        </div>
+        {children}
+      </>
+    );
+  }
+
   return <>{children}</>;
 }
