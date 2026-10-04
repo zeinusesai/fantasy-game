@@ -134,6 +134,18 @@ const schema = defineSchema(
       // silently defaulting to one. Only the profile editor writes this
       // field — saveSquad never touches it.
       supportedHouse: v.optional(houseValidator),
+
+      // ── Y11 PE Hub fields ───────────────────────────────────────────
+      // PE section / class group. OPTIONAL with a safe `?? null` fallback
+      // everywhere it is read — it replaces the old house dependency as the
+      // only grouping the UI is allowed to fall back to.
+      section: v.optional(v.string()),
+      // Retro 8-bit arcade theme toggle (player cards, pitch turf, badges).
+      pixelMode: v.optional(v.boolean()),
+      // Equipped 5-second entrance audio stinger (a preset id or URL).
+      entranceStinger: v.optional(v.string()),
+      // Equipped stadium pitch skin.
+      pitchSkin: v.optional(v.string()),
     })
       .index("email", ["email"]) // index for the email. do not remove or modify
       .index("by_username", ["username"])
@@ -334,9 +346,32 @@ const schema = defineSchema(
           }),
         ),
       ),
+
+      // ── Y11 PE Hub: dynamic weekly friendly metadata ──────────────────
+      // Every field below is OPTIONAL so every pre-existing match row stays
+      // valid without a backfill, and legacy house fixtures keep rendering.
+      //
+      // Weekly friendlies are drawn fresh each gameweek: "Team Alpha" vs
+      // "Team Omega", or randomized captain sides like "Adam's 7" vs
+      // "Zein's 7". When present, the team names/crests BELOW override the
+      // house labels for display; the `house` fields remain as the legacy
+      // storage slot so nothing else in the scoring engine has to change.
+      gameweek: v.optional(v.number()), // 1..30+ across the PE academic year
+      homeTeamName: v.optional(v.string()),
+      awayTeamName: v.optional(v.string()),
+      // Preset crest id (see CREST_PRESETS) or an uploaded custom logo URL.
+      homeCrest: v.optional(v.string()),
+      awayCrest: v.optional(v.string()),
+      // Rosters drawn for THIS week's friendly only — never a fixed team.
+      homeSquad: v.optional(v.array(v.id("players"))),
+      awaySquad: v.optional(v.array(v.id("players"))),
+      // Optional bookkeeping for the friendly generator.
+      friendly: v.optional(v.boolean()),
+      drawnAt: v.optional(v.number()),
     })
       .index("by_stage", ["stage"])
-      .index("by_status", ["status"]),
+      .index("by_status", ["status"])
+      .index("by_gameweek", ["gameweek"]),
 
     // ===== Per-player stat lines inside one match =====
     matchPlayers: defineTable({
@@ -499,6 +534,34 @@ const schema = defineSchema(
       // ── Maintenance screen copy ──
       maintenanceMessage: v.optional(v.string()),
     }),
+
+    // ===== Y11 PE Hub: sequential season gameweeks (GW1 … GW30+) =====
+    //
+    // Independent of the legacy stage-keyed `gameweeks` table: this is the
+    // PE academic-year calendar. One row per gameweek, created on demand by
+    // the Super Admin, each with a lifecycle the admin can drive:
+    //
+    //   open → locked → calculating → closed
+    //
+    // Weekly friendlies hang off `matches.gameweek`, which points at
+    // `seasonGameweeks.number`.
+    seasonGameweeks: defineTable({
+      number: v.number(), // 1, 2, 3 … 30+
+      label: v.string(), // "GW1"
+      title: v.optional(v.string()), // friendly headline e.g. "Alpha vs Omega"
+      status: v.union(
+        v.literal("open"),
+        v.literal("locked"),
+        v.literal("calculating"),
+        v.literal("closed"),
+      ),
+      deadlineAt: v.optional(v.number()), // epoch ms
+      openedAt: v.optional(v.number()),
+      closedAt: v.optional(v.number()),
+      note: v.optional(v.string()),
+    })
+      .index("by_number", ["number"])
+      .index("by_status", ["status"]),
 
     // ===== Super Admin audit log =====
     // Every privileged action is appended here so a misconfiguration can

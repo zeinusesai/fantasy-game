@@ -27,6 +27,9 @@ import { formatMoney, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { isZeinSuperAdmin } from "@/lib/adminGuard";
+import { crestPreset, normalizeCrest } from "@/convex/crests";
+import type { Doc } from "@/convex/_generated/dataModel";
 import {
   ArrowRight,
   BarChart3,
@@ -35,12 +38,67 @@ import {
   Flame,
   Loader2,
   Megaphone,
+  Newspaper,
   Shield,
   Star,
   Trophy,
   Users,
 } from "lucide-react";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router";
+
+type MatchDoc = Doc<"matches">;
+
+/**
+ * Y11 PE Hub — weekly friendlies carry dynamic team names; legacy house
+ * fixtures fall straight back to the stored house label.
+ */
+const homeLabelOf = (m: MatchDoc): string => {
+  const name = typeof m.homeTeamName === "string" ? m.homeTeamName.trim() : "";
+  return name !== "" ? name : m.homeHouse;
+};
+const awayLabelOf = (m: MatchDoc): string => {
+  const name = typeof m.awayTeamName === "string" ? m.awayTeamName.trim() : "";
+  return name !== "" ? name : m.awayHouse;
+};
+
+/** Compact crest for a fixture row: preset glyph → custom logo → house crest. */
+function FixtureCrest({
+  match,
+  side,
+  size = 22,
+}: {
+  match: MatchDoc;
+  side: "home" | "away";
+  size?: number;
+}) {
+  const raw = side === "home" ? match.homeCrest : match.awayCrest;
+  const preset = crestPreset(normalizeCrest(raw ?? ""));
+  if (preset) {
+    return (
+      <span
+        className="flex items-center justify-center"
+        style={{ width: size, height: size, fontSize: size * 0.8, lineHeight: 1 }}
+        title={preset.label}
+      >
+        {preset.glyph}
+      </span>
+    );
+  }
+  if (typeof raw === "string" && raw !== "") {
+    return (
+      <img
+        src={raw}
+        alt=""
+        className="rounded-md border border-border/70 object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <HouseCrest house={side === "home" ? match.homeHouse : match.awayHouse} size={size} />
+  );
+}
 
 export default function Dashboard() {
   const { user, isLoading: authLoading } = useAuth();
@@ -60,6 +118,9 @@ export default function Dashboard() {
     ) === true;
   const matches = useQuery(api.matches.listMatches);
   const config = useQuery(api.config.getConfig);
+  // Y11 PE Hub — auto-generated gameweek recap + weekly banter badges.
+  // `null` while loading / with no settled gameweek, which hides the card.
+  const recap = useQuery(api.matches.getGameweekRecap);
 
   // Loading guards: never render squad-dependent UI before queries resolve.
   if (authLoading || mySquad === undefined || myStats === undefined) {
@@ -83,7 +144,9 @@ export default function Dashboard() {
   const adminMessage = config?.adminMessage ?? "";
 
   const role = user?.role ?? "manager";
-  const isAdmin = role === "super_admin" || role === "moderator";
+  // Single Super-Admin restriction — admin-only dashboard copy is shown only
+  // to Zein (see src/lib/adminGuard.ts for the identity check).
+  const isAdmin = isZeinSuperAdmin(user);
 
   const completed = (matches ?? []).filter((m) => m.status === "completed");
   const upcoming = (matches ?? []).filter((m) => m.status !== "completed");
@@ -116,7 +179,7 @@ export default function Dashboard() {
 
   return (
     <AppNav>
-      <div className="mx-auto w-full max-w-md space-y-6 sm:max-w-7xl">
+      <div className="mx-auto w-full max-w-md space-y-6 p-6 sm:max-w-7xl">
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -130,7 +193,7 @@ export default function Dashboard() {
                   <Shield className="text-primary size-3.5" /> Moderator console
                 </>
               ) : (
-                "Manager dashboard"
+                "Y11 PE Hub · Manager dashboard"
               )}
             </p>
             <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
@@ -164,6 +227,54 @@ export default function Dashboard() {
               <p className="mt-0.5 text-sm font-medium whitespace-pre-wrap">{adminMessage}</p>
             </div>
           </div>
+        )}
+
+        {/* ── Gameweek recap + Banter & Blunder badges ──────────────── */}
+        {recap && (
+          <Card className="card-sheen border-border/80">
+            <CardHeader className="pb-3">
+              <CardTitle className="tracking-tight font-bold flex items-center gap-2">
+                <Newspaper className="text-primary size-4" /> Gameweek recap
+              </CardTitle>
+              <CardDescription>
+                Auto-generated the moment a gameweek closes · {recap.managerCount} managers
+                scored
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <h3 className="font-display text-xl font-bold tracking-tight">
+                  {recap.headline}
+                </h3>
+                <div className="text-muted-foreground mt-2 space-y-2 text-sm leading-relaxed">
+                  {recap.paragraphs.map((para, i) => (
+                    <motion.p
+                      key={i}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, delay: i * 0.08 }}
+                    >
+                      {para}
+                    </motion.p>
+                  ))}
+                </div>
+              </div>
+              {recap.badges.length > 0 && (
+                <div className="flex flex-wrap gap-2 border-t border-border/70 pt-3">
+                  {recap.badges.map((b) => (
+                    <span
+                      key={b.label}
+                      title={b.note}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 text-xs font-semibold text-amber-200"
+                    >
+                      {b.emoji} {b.label}
+                      <span className="text-muted-foreground font-normal">· {b.team}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         {/* Stat cards */}
@@ -270,11 +381,11 @@ export default function Dashboard() {
                     </p>
                     <div className="mt-1.5 flex items-center justify-between gap-2">
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
-                        <HouseCrest house={m.homeHouse} size={22} /> {m.homeHouse}
+                        <FixtureCrest match={m} side="home" size={22} /> {homeLabelOf(m)}
                       </span>
                       <span className="font-score text-muted-foreground text-xs font-bold">vs</span>
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
-                        {m.awayHouse} <HouseCrest house={m.awayHouse} size={22} />
+                        {awayLabelOf(m)} <FixtureCrest match={m} side="away" size={22} />
                       </span>
                     </div>
                   </button>
@@ -303,7 +414,7 @@ export default function Dashboard() {
                     </p>
                     <div className="mt-1.5 flex items-center justify-between">
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
-                        <HouseCrest house={m.homeHouse} size={22} /> {m.homeHouse}
+                        <FixtureCrest match={m} side="home" size={22} /> {homeLabelOf(m)}
                       </span>
                       <span className="flex flex-col items-center gap-0.5">
                         <span className="font-score rounded-md bg-primary/15 px-2 py-0.5 text-sm font-bold text-primary">
@@ -312,7 +423,7 @@ export default function Dashboard() {
                         <PenaltyBadge match={m} />
                       </span>
                       <span className="flex items-center gap-1.5 text-sm font-semibold">
-                        {m.awayHouse} <HouseCrest house={m.awayHouse} size={22} />
+                        {awayLabelOf(m)} <FixtureCrest match={m} side="away" size={22} />
                       </span>
                     </div>
                   </button>

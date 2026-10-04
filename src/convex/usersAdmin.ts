@@ -8,7 +8,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireSuperAdmin } from "./lib";
+import { requireSuperAdmin, isSuperAdminIdentity } from "./lib";
 import { FIXED_MANAGER_BUDGET } from "./configDefaults";
 import { normalizeSettings, getSettingsRow } from "./adminConfig";
 import { internal } from "./_generated/api";
@@ -20,14 +20,14 @@ import type { Doc } from "./_generated/dataModel";
 
 /**
  * RBAC check that never throws: returns the caller's user doc when they may
- * VIEW the user list (Super Admin role, or either pre-registered admin
- * username Zein/Cino as a fallback when a role was never written), otherwise
- * `null`. The query then degrades to an empty list instead of surfacing an
- * unhandled error in the client.
+ * VIEW the user list — i.e. the single Super Admin (Zein) — otherwise `null`.
+ * The query then degrades to an empty list instead of surfacing an unhandled
+ * error in the client.
  *
- * NOTE: view-only safety net — the mutating functions below still require
- * super_admin strictly, so Cino (moderator) can never edit budgets or reset
- * passwords regardless of this check.
+ * Both conditions must hold: the `super_admin` role AND the Zein identity.
+ * A mis-promoted row (role flipped by hand) therefore still reads `null`.
+ * The mutating functions below run the identical check via
+ * `requireSuperAdmin`, so view and write can never disagree.
  */
 async function safeUserListViewer(ctx: QueryCtx): Promise<Doc<"users"> | null> {
   try {
@@ -35,9 +35,7 @@ async function safeUserListViewer(ctx: QueryCtx): Promise<Doc<"users"> | null> {
     if (userId === null) return null;
     const user = await ctx.db.get(userId);
     if (!user) return null;
-    const isSuperByRole = user.role === "super_admin";
-    const isKnownAdmin = user.username === "zein" || user.username === "cino";
-    return isSuperByRole || isKnownAdmin ? user : null;
+    return user.role === "super_admin" && isSuperAdminIdentity(user) ? user : null;
   } catch {
     return null;
   }
@@ -92,7 +90,8 @@ export const listAllUsersWithRoles = query({
       const caller = await getAuthUserId(ctx);
       if (caller === null) return [];
       const me = await ctx.db.get(caller);
-      if (!me || me.role !== "super_admin") return [];
+      // Single Super-Admin restriction: role AND identity must both match.
+      if (!me || me.role !== "super_admin" || !isSuperAdminIdentity(me)) return [];
 
       const users = await ctx.db.query("users").collect();
       return users

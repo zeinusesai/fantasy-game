@@ -3,21 +3,17 @@ import { api } from "@/convex/_generated/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { HouseCrest } from "@/components/houses";
-import {
-  HOUSES,
-  HOUSE_DESCRIPTIONS,
-  HOUSE_GRADIENTS,
-  scoringRuleLines,
-} from "@/lib/fantasy";
+import { scoringRuleLines } from "@/lib/fantasy";
 import { useAuth } from "@/hooks/use-auth";
 import { useAdminConfig } from "@/hooks/use-admin-config";
-import { useHouseName } from "@/components/houses";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
   BarChart3,
+  Dribbble,
+  Flame,
   Play,
+  Shield,
   Swords,
   Timer,
   Trophy,
@@ -26,29 +22,35 @@ import {
 } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
+/**
+ * Y11 PE Hub — public landing page.
+ *
+ * Rebranded away from the old four-house / elemental theme onto a sleek
+ * PE & sports aesthetic: deep slate background, glassmorphic containers and
+ * electric-teal + gold accents (see src/index.css for the token values).
+ */
 export default function Landing() {
   const { isAuthenticated } = useAuth();
   // Live scoring matrix — the Super Admin can retune every value from the
   // Customization tab, so the public rules table must reflect the config.
-  const { scoringRules, uiText, houseBrand } = useAdminConfig();
-  const houseName = useHouseName();
+  const { scoringRules, uiText } = useAdminConfig();
   const navigate = useNavigate();
   const leaderboard = useQuery(api.managers.getLeaderboard);
   const top = (leaderboard ?? []).slice(0, 3);
 
   return (
-    <div className="stadium-bg min-h-screen">
+    <div className="stadium-bg min-h-screen bg-slate-950">
       {/* Nav */}
-      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-md">
+      <header className="border-b border-white/10 bg-slate-950/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            <span className="from-primary to-primary/60 flex size-9 items-center justify-center rounded-lg bg-gradient-to-br text-primary-foreground shadow-md">
+          <Link to="/" className="flex items-center gap-2">
+            <span className="flex size-9 items-center justify-center rounded-lg border border-teal-400/40 bg-teal-400/10 text-teal-300">
               <Swords className="size-5" />
             </span>
-            <span className="font-display text-2xl font-bold tracking-wide">
-              YEAR 11 <span className="text-primary">INTERHOUSE</span>
+            <span className="font-display text-2xl font-bold tracking-wide text-white">
+              Y11 <span className="text-teal-300">PE HUB</span>
             </span>
-          </div>
+          </Link>
           <div className="flex items-center gap-2">
             {isAuthenticated ? (
               <Button onClick={() => navigate("/dashboard")}>
@@ -70,26 +72,33 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative overflow-hidden">
-        <div className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-16 lg:grid-cols-2 lg:items-center lg:py-24">
+        <div
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(20,184,166,0.16),transparent_55%)]"
+          aria-hidden
+        />
+        <div className="relative mx-auto grid w-full max-w-7xl gap-10 px-4 py-16 lg:grid-cols-2 lg:items-center lg:py-24">
           <motion.div
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
-            <Badge variant="outline" className="border-primary/40 text-primary mb-4 gap-1.5">
-              <Trophy className="size-3.5" /> Interhouse Tournament · Season 1
+            <Badge
+              variant="outline"
+              className="mb-4 gap-1.5 border-teal-400/40 bg-teal-400/10 text-teal-300"
+            >
+              <Trophy className="size-3.5" /> {uiText.appTitle} · Season 1
             </Badge>
-            <h1 className="font-display text-5xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
-              Four houses.
+            <h1 className="font-display text-5xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-6xl">
+              Thirty gameweeks.
               <br />
-              One <span className="text-primary text-glow">cup.</span>
+              One <span className="text-teal-300">pitch.</span>
               <br />
-              Your fantasy squad.
+              Your seven.
             </h1>
-            <p className="text-muted-foreground mt-5 max-w-lg text-lg leading-relaxed">
-              Fire, Earth, Wind and Water battle it out on the pitch. Build a 7-a-side
-              fantasy team from real school players, pick your captain, and climb the
-              global leaderboard as the tournament unfolds.
+            <p className="mt-5 max-w-lg text-lg leading-relaxed text-slate-400">
+              A fresh friendly is drawn every week of the PE year. Draft a 7-a-side
+              fantasy team from the real Year 11 roster, pick your captain, and climb
+              the leaderboard as the gameweeks roll on.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               {isAuthenticated ? (
@@ -102,66 +111,81 @@ export default function Landing() {
                 </Button>
               )}
               <Button size="lg" variant="outline" onClick={() => navigate("/tournament")}>
-                <Play className="mr-1 size-4" /> View bracket
+                <Play className="mr-1 size-4" /> This week's fixture
               </Button>
             </div>
-            <div className="text-muted-foreground mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
               <span className="flex items-center gap-1.5">
-                <Users className="size-4 text-primary" /> 7-a-side fantasy squads
+                <Users className="size-4 text-teal-300" /> 7-a-side fantasy squads
               </span>
               <span className="flex items-center gap-1.5">
-                <Zap className="size-4 text-primary" /> $70m starting budget
+                <Zap className="size-4 text-teal-300" /> $70m starting budget
               </span>
               <span className="flex items-center gap-1.5">
-                <Timer className="size-4 text-primary" /> Live match centers
+                <Timer className="size-4 text-teal-300" /> Live match centers
               </span>
             </div>
           </motion.div>
 
-          {/* Bracket teaser card */}
+          {/* This week's friendly teaser card */}
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.15 }}
             className="relative"
           >
-            <div className="absolute -inset-4 rounded-3xl bg-primary/5 blur-2xl" aria-hidden />
-            <Card className="card-sheen relative border-border/80 shadow-2xl">
+            <div
+              className="absolute -inset-4 rounded-3xl bg-teal-400/10 blur-2xl"
+              aria-hidden
+            />
+            <Card className="card-sheen relative border-white/10 bg-white/[0.03] shadow-2xl">
               <CardContent className="space-y-4 p-6">
                 <div className="flex items-center justify-between">
-                  <span className="font-display text-lg font-bold uppercase tracking-wide">
-                    Tournament bracket
+                  <span className="font-display text-lg font-bold uppercase tracking-wide text-white">
+                    This week's friendly
                   </span>
-                  <Badge variant="secondary" className="gap-1">
-                    <Trophy className="size-3" /> Knockout
+                  <Badge
+                    variant="secondary"
+                    className="gap-1 border-teal-400/30 bg-teal-400/10 text-teal-300"
+                  >
+                    <Trophy className="size-3" /> Gameweek 1
                   </Badge>
                 </div>
                 {[
-                  { stage: "Semifinal 1", home: "Fire", away: "Earth", score: null },
-                  { stage: "Semifinal 2", home: "Wind", away: "Water", score: null },
+                  { stage: "Kickoff", home: "Team Alpha", away: "Team Omega" },
+                  { stage: "Undercard", home: "Adam's 7", away: "Zein's 7" },
                 ].map((m, i) => (
-                  <div key={i} className="rounded-xl border border-border/70 bg-secondary/40 p-3">
-                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold uppercase tracking-widest">
+                  <div
+                    key={i}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+                  >
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
                       {m.stage}
                     </p>
                     <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2 font-semibold">
-                        <HouseCrest house={m.home as never} size={28} /> {m.home}
+                      <span className="flex items-center gap-2 font-semibold text-white">
+                        <span className="flex size-7 items-center justify-center rounded-md border border-teal-400/40 bg-teal-400/10 text-[11px] font-bold text-teal-300">
+                          A
+                        </span>
+                        {m.home}
                       </span>
-                      <span className="font-score text-muted-foreground text-sm font-bold">vs</span>
-                      <span className="flex items-center gap-2 font-semibold">
-                        {m.away} <HouseCrest house={m.away as never} size={28} />
+                      <span className="font-score text-sm font-bold text-slate-500">vs</span>
+                      <span className="flex items-center gap-2 font-semibold text-white">
+                        {m.away}
+                        <span className="flex size-7 items-center justify-center rounded-md border border-amber-400/40 bg-amber-400/10 text-[11px] font-bold text-amber-300">
+                          B
+                        </span>
                       </span>
                     </div>
                   </div>
                 ))}
-                <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-primary/10 p-3">
-                  <span className="font-display flex items-center gap-2 text-sm font-bold uppercase">
-                    <Trophy className="text-primary size-4" /> Final — winner takes the cup
+                <div className="flex items-center justify-between rounded-xl border border-teal-400/30 bg-teal-400/10 p-3">
+                  <span className="font-display flex items-center gap-2 text-sm font-bold uppercase text-teal-200">
+                    <Trophy className="size-4 text-amber-300" /> Scores lock at full time
                   </span>
                   <Link
                     to="/tournament"
-                    className="text-primary hover:text-primary/80 text-xs font-semibold"
+                    className="text-xs font-semibold text-teal-300 hover:text-teal-200"
                   >
                     Follow live →
                   </Link>
@@ -172,29 +196,58 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Houses */}
-      <section className="mx-auto w-full max-w-7xl px-4 py-12">
-        <h2 className="font-display text-3xl font-bold tracking-tight">The four houses</h2>
-        <p className="text-muted-foreground mt-1">Every player belongs to a house — scout them all.</p>
+      {/* PE feature grid */}
+      <section className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6">
+        <h2 className="font-display text-3xl font-bold tracking-tight text-white">
+          Built for the PE year
+        </h2>
+        <p className="mt-1 text-slate-400">
+          Skill tiers, tactical formations and a brand new fixture every single week.
+        </p>
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {HOUSES.map((house, i) => (
+          {[
+            {
+              icon: Swords,
+              title: "Weekly friendlies",
+              body: "Dynamic, randomized 7-a-side matchups drawn fresh for every gameweek — never a fixed fixture list.",
+              tone: "text-teal-300 border-teal-400/30 bg-teal-400/10",
+            },
+            {
+              icon: Shield,
+              title: "Tight formations",
+              body: "1-2-3-1, 1-3-2-1, 1-2-2-2. Goalkeepers are locked to the GK slot — no square pegs.",
+              tone: "text-amber-300 border-amber-400/30 bg-amber-400/10",
+            },
+            {
+              icon: Flame,
+              title: "Skill tiers & form",
+              body: "Numeric Tier 1–5 badges, points per gameweek and a 🔥 Hot / ❄️ Cold form trend on every card.",
+              tone: "text-emerald-300 border-emerald-400/30 bg-emerald-400/10",
+            },
+            {
+              icon: Dribbble,
+              title: "Your locker",
+              body: "Equip pitch skins, entrance stingers and a retro 8-bit pixel theme for your whole profile.",
+              tone: "text-sky-300 border-sky-400/30 bg-sky-400/10",
+            },
+          ].map((f, i) => (
             <motion.div
-              key={house}
+              key={f.title}
               initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ duration: 0.35, delay: i * 0.07 }}
             >
-              <Card className={cnHouseCard(house)}>
-                <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
-                  <HouseCrest house={house} size={64} />
+              <Card className="card-sheen h-full border-white/10 bg-white/[0.03] transition-colors hover:border-teal-400/40">
+                <CardContent className="flex h-full flex-col gap-3 p-6">
+                  <span
+                    className={`flex size-10 items-center justify-center rounded-lg border ${f.tone}`}
+                  >
+                    <f.icon className="size-5" />
+                  </span>
                   <div>
-                    <h3 className="font-display text-xl font-bold">{houseName(house)}</h3>
-                    {/* The Super-Admin editable motto, falling back to the
-                        built-in house description when none is configured. */}
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      {houseBrand(house).motto || HOUSE_DESCRIPTIONS[house]}
-                    </p>
+                    <h3 className="font-display text-lg font-bold text-white">{f.title}</h3>
+                    <p className="mt-1 text-sm text-slate-400">{f.body}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -204,9 +257,11 @@ export default function Landing() {
       </section>
 
       {/* How it works + scoring */}
-      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 lg:grid-cols-2">
+      <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 sm:px-6 lg:grid-cols-2">
         <div>
-          <h2 className="font-display text-3xl font-bold tracking-tight">How it works</h2>
+          <h2 className="font-display text-3xl font-bold tracking-tight text-white">
+            How it works
+          </h2>
           <ol className="mt-6 space-y-4">
             {[
               {
@@ -215,7 +270,7 @@ export default function Landing() {
               },
               {
                 title: "Draft 7 starters",
-                body: "1 GK, 2 DEF, 2 MID, 2 FWD — max 3 players from any single house.",
+                body: "1 GK, 2 DEF, 2 MID, 2 FWD — or switch to a 1-3-2-1 / 1-2-2-2 shape.",
               },
               {
                 title: "Name your captain",
@@ -223,36 +278,38 @@ export default function Landing() {
               },
               {
                 title: "Climb the leaderboard",
-                body: "Points are banked automatically after every recorded fixture.",
+                body: "Every manager sits on 0 pts from day one — GW1 scores land the moment it closes.",
               },
             ].map((step, i) => (
               <li key={i} className="flex gap-4">
-                <span className="font-score bg-primary/15 text-primary flex size-9 shrink-0 items-center justify-center rounded-lg text-lg font-bold">
+                <span className="font-score flex size-9 shrink-0 items-center justify-center rounded-lg border border-teal-400/30 bg-teal-400/10 text-lg font-bold text-teal-300">
                   {i + 1}
                 </span>
                 <div>
-                  <h3 className="font-semibold">{step.title}</h3>
-                  <p className="text-muted-foreground text-sm">{step.body}</p>
+                  <h3 className="font-semibold text-white">{step.title}</h3>
+                  <p className="text-sm text-slate-400">{step.body}</p>
                 </div>
               </li>
             ))}
           </ol>
         </div>
         <div>
-          <h2 className="font-display text-3xl font-bold tracking-tight">Scoring</h2>
-          <p className="text-muted-foreground mt-1 text-sm">Fantasy points, straight from the match report.</p>
-          <Card className="mt-6">
+          <h2 className="font-display text-3xl font-bold tracking-tight text-white">Scoring</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Fantasy points, straight from the match report.
+          </p>
+          <Card className="mt-6 border-white/10 bg-white/[0.03]">
             <CardContent className="grid grid-cols-2 gap-x-6 gap-y-2 p-6 text-sm sm:grid-cols-3 lg:grid-cols-2">
               {scoringRuleLines(scoringRules).map((rule) => (
                 <div key={rule.label} className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">{rule.label}</span>
+                  <span className="text-slate-400">{rule.label}</span>
                   <span
                     className={`font-score font-bold ${
                       rule.points.startsWith("+")
                         ? "text-emerald-400"
                         : rule.points.startsWith("-")
                           ? "text-red-400"
-                          : "text-primary"
+                          : "text-teal-300"
                     }`}
                   >
                     {rule.points}
@@ -266,14 +323,14 @@ export default function Landing() {
 
       {/* Top managers strip */}
       {top.length > 0 && (
-        <section className="mx-auto w-full max-w-7xl px-4 pb-16">
-          <Card className="card-sheen border-border/80">
+        <section className="mx-auto w-full max-w-7xl px-4 pb-16 sm:px-6">
+          <Card className="card-sheen border-white/10 bg-white/[0.03]">
             <CardContent className="flex flex-col items-start gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="font-display flex items-center gap-2 text-2xl font-bold">
-                  <BarChart3 className="text-primary size-5" /> Current top managers
+                <h2 className="font-display flex items-center gap-2 text-2xl font-bold text-white">
+                  <BarChart3 className="size-5 text-teal-300" /> Current top managers
                 </h2>
-                <p className="text-muted-foreground mt-1 text-sm">
+                <p className="mt-1 text-sm text-slate-400">
                   {top
                     .map((m, i) => `${i + 1}. ${m.teamName} (${m.totalPoints} pts)`)
                     .join("  ·  ")}
@@ -288,33 +345,28 @@ export default function Landing() {
       )}
 
       {/* Final CTA */}
-      <section className="border-t border-border/60">
+      <section className="border-t border-white/10">
         <div className="mx-auto flex w-full max-w-7xl flex-col items-center gap-4 px-4 py-16 text-center">
-          <h2 className="font-display text-4xl font-extrabold tracking-tight">
-            The cup won't win itself.
+          <h2 className="font-display text-4xl font-extrabold tracking-tight text-white">
+            The pitch won't pick itself.
           </h2>
-          <p className="text-muted-foreground max-w-md">
-            Register, draft your seven, and prove you're the sharpest manager in school.
+          <p className="max-w-md text-slate-400">
+            Register, draft your seven, and prove you're the sharpest manager in Year 11.
           </p>
-          <Button size="lg" className="mt-2" onClick={() => navigate(isAuthenticated ? "/squad" : "/auth")}>
-            {isAuthenticated ? "Go to my squad" : "Sign up free"} <ArrowRight className="ml-1 size-4" />
+          <Button
+            size="lg"
+            className="mt-2"
+            onClick={() => navigate(isAuthenticated ? "/squad" : "/auth")}
+          >
+            {isAuthenticated ? "Go to my squad" : "Sign up free"}{" "}
+            <ArrowRight className="ml-1 size-4" />
           </Button>
         </div>
       </section>
 
-      <footer className="text-muted-foreground border-t border-border/60 py-6 text-center text-xs">
-        Year 11 Interhouse · Tournament & Fantasy League
+      <footer className="border-t border-white/10 py-6 text-center text-xs text-slate-500">
+        {uiText.appTitle} · Year 11 PE · 7-a-side Fantasy League
       </footer>
     </div>
   );
-}
-
-function cnHouseCard(house: string) {
-  const map: Record<string, string> = {
-    Fire: "hover:border-red-500/50",
-    Earth: "hover:border-emerald-500/50",
-    Wind: "hover:border-amber-400/50",
-    Water: "hover:border-blue-500/50",
-  };
-  return `card-sheen border-border/80 transition-colors ${map[house] ?? ""}`;
 }

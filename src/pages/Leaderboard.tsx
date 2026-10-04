@@ -130,12 +130,16 @@ export default function Leaderboard() {
 
   return (
     <AppNav>
-      <div className="space-y-6">
+      <div className="mx-auto w-full max-w-md space-y-6 p-6 sm:max-w-7xl">
         <div>
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-widest">
+            Y11 PE Hub
+          </p>
           <h1 className="font-display text-3xl font-bold tracking-tight">Global leaderboard</h1>
           <p className="text-muted-foreground text-sm">
-            Every manager ranked by total fantasy points across the tournament. Click a team
-            to inspect their squad.
+            Every manager ranked by total fantasy points across the PE season. Every
+            registered manager is listed — from 0 pts before GW1 — and clicking a team
+            opens their squad.
           </p>
         </div>
 
@@ -154,9 +158,12 @@ export default function Leaderboard() {
                 <SkeletonList className="sm:hidden" count={6} />
               </>
             ) : rows.length === 0 ? (
-              <p className="text-muted-foreground py-8 text-center text-sm">
-                No managers have picked a squad yet. Be the first!
-              </p>
+              <div className="rounded-xl border border-dashed border-border/70 px-6 py-10 text-center">
+                <p className="text-muted-foreground text-sm">
+                  No managers registered yet — sign up and your name appears here
+                  immediately at 0 pts.
+                </p>
+              </div>
             ) : (
               <>
               {/* ── MOBILE: stacked cards ──

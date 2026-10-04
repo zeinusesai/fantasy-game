@@ -1,4 +1,4 @@
-// Year 11 Interhouse — downloadable squad share card (Instagram/WhatsApp).
+// Y11 PE Hub — downloadable squad share card (Instagram/WhatsApp).
 //
 // Renders the manager's 7-a-side lineup onto an offscreen <canvas> (1080×1350,
 // 4:5 — Instagram portrait) and triggers a PNG download. Fully defensive:
@@ -74,9 +74,9 @@ export function downloadShareCard(opts: {
 
     // ── Header ──
     ctx.textAlign = "center";
-    ctx.fillStyle = "#a78bfa";
+    ctx.fillStyle = "#14b8a6";
     ctx.font = "bold 34px Arial";
-    ctx.fillText("YEAR 11 INTERHOUSE — MY SQUAD", canvas.width / 2, 110);
+    ctx.fillText("Y11 PE HUB — MY SQUAD", canvas.width / 2, 110);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 64px Arial";
@@ -174,7 +174,7 @@ export function downloadShareCard(opts: {
     ctx.fillStyle = "rgba(255,255,255,0.35)";
     ctx.font = "24px Arial";
     ctx.fillText(
-      "Developed by Zein · Year 11 Interhouse Fantasy",
+      "Developed by Zein · Y11 PE Hub Fantasy",
       canvas.width / 2,
       canvas.height - 40,
     );

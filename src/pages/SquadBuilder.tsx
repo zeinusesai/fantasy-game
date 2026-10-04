@@ -46,7 +46,7 @@ import { PageLoading } from "@/components/PageLoading";
 import { PickedByDialog } from "@/components/PickedByDialog";
 import { CaptainModal, MostCaptainedSummary } from "@/components/CaptainModal";
 import { downloadShareCard } from "@/lib/shareCard";
-import { Share2, Zap, Lock, LayoutGrid, ImageOff, Crown } from "lucide-react";
+import { Share2, Zap, Lock, LayoutGrid, ImageOff, Crown, Gamepad2 } from "lucide-react";
 import { AlertTriangle, Check, Coins, Eye, Info, Loader2, RotateCcw, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
@@ -67,6 +67,83 @@ type PlayerRow = {
   image?: string | null;
   statusLabel?: string | null;
 };
+
+/** One row of the Y11 PE Hub skill-stats query (convex/matches.ts). */
+type SkillStat = {
+  playerId: Id<"players">;
+  tier: number;
+  avg: number;
+  total: number;
+  apps: number;
+  goals: number;
+  assists: number;
+  cleanSheets: number;
+  form: "hot" | "cold" | "steady";
+  recent: number[];
+};
+
+const TIER_TONE: Record<number, string> = {
+  1: "border-white/15 bg-white/5 text-slate-300",
+  2: "border-sky-400/40 bg-sky-400/10 text-sky-300",
+  3: "border-teal-400/40 bg-teal-400/10 text-teal-300",
+  4: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+  5: "border-gold/50 bg-gold/10 text-gold",
+};
+
+/** Numeric Skill Level Badge — Tier 1 … Tier 5 (replaces star ratings). */
+export function SkillTierBadge({ tier }: { tier: number }) {
+  const t = Math.min(5, Math.max(1, Math.round(Number(tier) || 1)));
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-black tracking-wider ${TIER_TONE[t]}`}
+      title={`Skill tier ${t} of 5`}
+    >
+      T{t}
+    </span>
+  );
+}
+
+/** Recent 3-gameweek form trend. Renders nothing while steady. */
+export function FormBadge({ form }: { form: SkillStat["form"] }) {
+  if (form === "hot") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-orange-400/50 bg-orange-500/15 px-1.5 py-px text-[10px] font-bold text-orange-200"
+        title="Hot across the last 3 gameweeks"
+      >
+        🔥 Hot
+      </span>
+    );
+  }
+  if (form === "cold") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-sky-400/50 bg-sky-500/15 px-1.5 py-px text-[10px] font-bold text-sky-200"
+        title="Cold across the last 3 gameweeks"
+      >
+        ❄️ Cold
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Compact stats line: tier · Avg Pts/GW · G A CS · form. */
+function SkillStatLine({ stat }: { stat: SkillStat | null }) {
+  if (!stat) return null;
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+      <SkillTierBadge tier={stat.tier} />
+      <span className="font-score text-muted-foreground">
+        Avg: {stat.avg.toFixed(1)} Pts/GW
+      </span>
+      <span className="text-muted-foreground/80">
+        · {stat.goals}G {stat.assists}A {stat.cleanSheets}CS
+      </span>
+      <FormBadge form={stat.form} />
+    </span>
+  );
+}
 
 /** Small circular player photo with a graceful initials fallback. */
 function MarketPhoto({
@@ -108,6 +185,17 @@ export default function SquadBuilder() {
   // Popularity badge data — null-safe: no squads yet → no badge rendered.
   const mostPicked = mostPickedResult ?? null;
 
+  // ── Y11 PE Hub: numeric skill tiers + form ──────────────────────────
+  // Tier 1–5, average points per gameweek, goals/assists/clean sheets and a
+  // 🔥 Hot / ❄️ Cold trend over the last three fixtures. Total: an empty
+  // array while loading (or on a storage hiccup) simply renders no badges.
+  const skillResult = useQuery(api.matches.getPlayerSkillStats);
+  const skillById = useMemo(() => {
+    const map = new Map<string, SkillStat>();
+    for (const row of skillResult ?? []) map.set(String(row.playerId), row);
+    return map;
+  }, [skillResult]);
+
   const players = playersResult ?? [];
   const mySquad = mySquadResult ?? null;
   const loading = playersResult === undefined || mySquadResult === undefined;
@@ -135,6 +223,21 @@ export default function SquadBuilder() {
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  // Retro 8-bit arcade theme (a per-manager profile setting).
+  const setPixelMode = useMutation(api.users.setPixelMode);
+  const pixelMode = user?.pixelMode === true;
+  const togglePixelMode = async () => {
+    try {
+      await setPixelMode({ enabled: !pixelMode });
+      toast.success(
+        !pixelMode
+          ? "8-bit arcade mode ON — player cards, turf and badges are now pixel art."
+          : "Back to the modern PE Hub look.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save your theme.");
+    }
+  };
 
   // ── Price change request modal state ──
   const submitPriceRequest = useMutation(api.requests.submitPriceRequest);
@@ -585,6 +688,14 @@ export default function SquadBuilder() {
                 <Share2 className="mr-1.5 size-4" /> Share Team
               </Button>
               <Button
+                variant={pixelMode ? "default" : "outline"}
+                onClick={togglePixelMode}
+                title="Toggle the retro 8-bit arcade theme for your player cards, pitch and badges"
+              >
+                <Gamepad2 className="mr-1.5 size-4" />
+                {pixelMode ? "8-bit ON" : "8-bit mode"}
+              </Button>
+              <Button
                 variant="outline"
                 onClick={() => {
                   setSelected(mySquad?.players.map((p) => p._id) ?? []);
@@ -668,21 +779,18 @@ export default function SquadBuilder() {
             <Card className="border-border/80">
               <CardContent className="p-4">
                 <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                  Houses used
+                  My section
                 </p>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {HOUSES.map((house) => {
-                    const count = houseCounts[house] ?? 0;
-                    return (
-                      <Badge
-                        key={house}
-                        variant={count > houseLimit ? "destructive" : "secondary"}
-                        className="gap-1 text-[10px]"
-                      >
-                        {house} {count}/{houseLimit}
-                      </Badge>
-                    );
-                  })}
+                {/* House grouping is gone from the PE season — `section` is the
+                    only grouping we fall back to, and it degrades to a clear
+                    neutral state when a manager has not been assigned one. */}
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <Badge variant="secondary" className="gap-1 text-[10px]">
+                    {user?.section ?? "Unassigned"}
+                  </Badge>
+                  <span className="text-muted-foreground text-[11px]">
+                    Set from your PE class group.
+                  </span>
                 </div>
               </CardContent>
             </Card>
@@ -872,6 +980,7 @@ export default function SquadBuilder() {
                     const affordable = isSelected || canAfford;
                     const pendingReq = pendingByPlayer.get(p._id);
                     const ownership = ownershipFor(p._id);
+                    const skill = skillById.get(String(p._id)) ?? null;
 
                     return (
                       <div key={p._id} className="flex h-full items-stretch gap-2">
@@ -914,6 +1023,7 @@ export default function SquadBuilder() {
                                     "Expected to Start" when unassigned. */}
                                 <StatusBadge status={p.statusLabel} short />
                               </p>
+                              <SkillStatLine stat={skill} />
                               {/* Ownership: exact pick count + % — safe at 0 squads.
                                   The count is a button: opens the pick-inspection
                                   dialog listing every manager who owns the player. */}
@@ -1173,6 +1283,46 @@ export default function SquadBuilder() {
               )}
             </DialogDescription>
           </DialogHeader>
+          {/* Y11 PE Hub skill read-out — numeric tier + the raw numbers. */}
+          {detailFor &&
+            (() => {
+              const stat = skillById.get(String(detailFor._id)) ?? null;
+              if (!stat) return null;
+              return (
+                <div className="rounded-xl border border-border/70 bg-secondary/40 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-widest">
+                      Skill &amp; form
+                    </span>
+                    <SkillTierBadge tier={stat.tier} />
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    {[
+                      { label: "Avg Pts/GW", value: stat.avg.toFixed(1) },
+                      { label: "Goals", value: String(stat.goals) },
+                      { label: "Assists", value: String(stat.assists) },
+                      { label: "Clean sheets", value: String(stat.cleanSheets) },
+                    ].map((cell) => (
+                      <div key={cell.label}>
+                        <p className="font-score text-lg font-bold">{cell.value}</p>
+                        <p className="text-muted-foreground text-[10px] uppercase tracking-wide">
+                          {cell.label}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <span className="text-muted-foreground">
+                      {stat.apps} appearance{stat.apps === 1 ? "" : "s"}
+                      {stat.recent.length > 0
+                        ? ` · last 3: ${stat.recent.join(" · ")} pts`
+                        : " · no scores yet"}
+                    </span>
+                    <FormBadge form={stat.form} />
+                  </div>
+                </div>
+              );
+            })()}
           {detailFor && (() => {
             const ownership = ownershipFor(detailFor._id);
             const isMine = selected.includes(detailFor._id);

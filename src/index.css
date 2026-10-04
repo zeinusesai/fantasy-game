@@ -42,74 +42,98 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* CHANGE VALUES FOR THEME — sleek modern sports dashboard (always dark) */
+/* Named accent utilities for the Y11 PE Hub theme — additive, so the block
+   above keeps its original token set. Generates bg-gold / text-electric /
+   bg-mint / bg-glass alongside Tailwind's built-in palette. */
+@theme {
+  --color-gold: #facc15;
+  --color-electric: #14b8a6;
+  --color-mint: #10b981;
+  --color-glass: rgba(255, 255, 255, 0.03);
+  --color-slate-canvas: #0b0f17;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   Y11 PE Hub — PE & sports theme (always dark)
+
+   Deep slate / charcoal canvas (#0B0F17) + high-contrast glassmorphism
+   containers (rgba(255,255,255,0.03)) with electric-teal (#14B8A6), neon
+   mint (#10B981) and refined gold (#FACC15) accents. This replaces the old
+   dark gold/blue "elemental" palette.
+   ──────────────────────────────────────────────────────────────────────── */
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.16 0.015 260);
-  --foreground: oklch(0.96 0.005 250);
-  --card: oklch(0.21 0.018 260);
-  --card-foreground: oklch(0.96 0.005 250);
-  --popover: oklch(0.2 0.018 260);
-  --popover-foreground: oklch(0.96 0.005 250);
-  --primary: oklch(0.83 0.17 95);
-  --primary-foreground: oklch(0.18 0.02 95);
-  --secondary: oklch(0.27 0.02 260);
-  --secondary-foreground: oklch(0.96 0.005 250);
-  --muted: oklch(0.26 0.02 260);
-  --muted-foreground: oklch(0.68 0.02 255);
-  --accent: oklch(0.3 0.03 150);
-  --accent-foreground: oklch(0.95 0.1 150);
-  --destructive: oklch(0.62 0.2 25);
-  --border: oklch(0.32 0.02 260);
-  --input: oklch(0.3 0.02 260);
-  --ring: oklch(0.83 0.17 95);
-  --chart-1: oklch(0.83 0.17 95);
-  --chart-2: oklch(0.65 0.19 145);
-  --chart-3: oklch(0.6 0.15 230);
-  --chart-4: oklch(0.62 0.2 25);
-  --chart-5: oklch(0.8 0.16 85);
-  --sidebar: oklch(0.19 0.018 260);
-  --sidebar-foreground: oklch(0.96 0.005 250);
-  --sidebar-primary: oklch(0.83 0.17 95);
-  --sidebar-primary-foreground: oklch(0.18 0.02 95);
-  --sidebar-accent: oklch(0.27 0.02 260);
-  --sidebar-accent-foreground: oklch(0.96 0.005 250);
-  --sidebar-border: oklch(0.32 0.02 260);
-  --sidebar-ring: oklch(0.83 0.17 95);
+  --background: #0b0f17;
+  --foreground: #e2e8f0;
+  --card: rgba(255, 255, 255, 0.03);
+  --card-foreground: #e8edf4;
+  --popover: rgba(255, 255, 255, 0.04);
+  --popover-foreground: #e8edf4;
+  --primary: #14b8a6;
+  --primary-foreground: #04211e;
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: #e2e8f0;
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: #94a3b8;
+  --accent: rgba(20, 184, 166, 0.16);
+  --accent-foreground: #5eead4;
+  --destructive: #f87171;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #14b8a6;
+  --chart-1: #14b8a6;
+  --chart-2: #10b981;
+  --chart-3: #facc15;
+  --chart-4: #38bdf8;
+  --chart-5: #f87171;
+  --sidebar: #0b0f17;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #14b8a6;
+  --sidebar-primary-foreground: #04211e;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #14b8a6;
+
+  /* Named accents, available as utilities (bg-gold / text-electric / …). */
+  --color-gold: #facc15;
+  --color-electric: #14b8a6;
+  --color-mint: #10b981;
+  --color-glass: rgba(255, 255, 255, 0.03);
 }
 
 .dark {
-  --background: oklch(0.16 0.015 260);
-  --foreground: oklch(0.96 0.005 250);
-  --card: oklch(0.21 0.018 260);
-  --card-foreground: oklch(0.96 0.005 250);
-  --popover: oklch(0.2 0.018 260);
-  --popover-foreground: oklch(0.96 0.005 250);
-  --primary: oklch(0.83 0.17 95);
-  --primary-foreground: oklch(0.18 0.02 95);
-  --secondary: oklch(0.27 0.02 260);
-  --secondary-foreground: oklch(0.96 0.005 250);
-  --muted: oklch(0.26 0.02 260);
-  --muted-foreground: oklch(0.68 0.02 255);
-  --accent: oklch(0.3 0.03 150);
-  --accent-foreground: oklch(0.95 0.1 150);
-  --destructive: oklch(0.62 0.2 25);
-  --border: oklch(0.32 0.02 260);
-  --input: oklch(0.3 0.02 260);
-  --ring: oklch(0.83 0.17 95);
-  --chart-1: oklch(0.83 0.17 95);
-  --chart-2: oklch(0.65 0.19 145);
-  --chart-3: oklch(0.6 0.15 230);
-  --chart-4: oklch(0.62 0.2 25);
-  --chart-5: oklch(0.8 0.16 85);
-  --sidebar: oklch(0.19 0.018 260);
-  --sidebar-foreground: oklch(0.96 0.005 250);
-  --sidebar-primary: oklch(0.83 0.17 95);
-  --sidebar-primary-foreground: oklch(0.18 0.02 95);
-  --sidebar-accent: oklch(0.27 0.02 260);
-  --sidebar-accent-foreground: oklch(0.96 0.005 250);
-  --sidebar-border: oklch(0.32 0.02 260);
-  --sidebar-ring: oklch(0.83 0.17 95);
+  --background: #0b0f17;
+  --foreground: #e2e8f0;
+  --card: rgba(255, 255, 255, 0.03);
+  --card-foreground: #e8edf4;
+  --popover: rgba(255, 255, 255, 0.04);
+  --popover-foreground: #e8edf4;
+  --primary: #14b8a6;
+  --primary-foreground: #04211e;
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: #e2e8f0;
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: #94a3b8;
+  --accent: rgba(20, 184, 166, 0.16);
+  --accent-foreground: #5eead4;
+  --destructive: #f87171;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: #14b8a6;
+  --chart-1: #14b8a6;
+  --chart-2: #10b981;
+  --chart-3: #facc15;
+  --chart-4: #38bdf8;
+  --chart-5: #f87171;
+  --sidebar: #0b0f17;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #14b8a6;
+  --sidebar-primary-foreground: #04211e;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #14b8a6;
 }
 
 /* ===== Sports-dashboard theme utilities ===== */
@@ -123,14 +147,20 @@
     font-variant-numeric: tabular-nums;
   }
   .text-glow {
-    text-shadow: 0 0 18px rgb(250 204 21 / 0.35);
+    text-shadow: 0 0 18px rgb(20 184 166 / 0.4);
   }
+  /* PE & sports canvas: teal wash up top, gold touchline glow at the base. */
   .stadium-bg {
     background:
-      radial-gradient(1200px 500px at 15% -10%, rgb(250 204 21 / 0.08), transparent 60%),
-      radial-gradient(900px 420px at 90% 0%, rgb(59 130 246 / 0.07), transparent 55%),
-      radial-gradient(700px 380px at 50% 110%, rgb(34 197 94 / 0.06), transparent 60%),
+      radial-gradient(1200px 500px at 15% -10%, rgb(20 184 166 / 0.14), transparent 60%),
+      radial-gradient(900px 420px at 90% 0%, rgb(250 204 21 / 0.07), transparent 55%),
+      radial-gradient(700px 380px at 50% 110%, rgb(16 185 129 / 0.08), transparent 60%),
       var(--background);
+  }
+  /* Glassmorphism container — rgba(255,255,255,0.03) over the slate canvas. */
+  .glass {
+    background-color: rgb(255 255 255 / 0.03);
+    border: 1px solid rgb(255 255 255 / 0.1);
   }
   .pitch-bg {
     background:
@@ -245,12 +275,12 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.02 260);
+  background: #1e293b;
   border-radius: 999px;
   border: 2px solid var(--background);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0.02 260);
+  background: #334155;
 }
 
 @layer base {
@@ -342,7 +372,7 @@
   }
   .skeleton {
     animation: skeleton-pulse 1.6s ease-in-out infinite;
-    background: hsl(var(--muted) / 0.7);
+    background: color-mix(in oklab, var(--muted) 70%, transparent);
     border-radius: calc(var(--radius) - 2px);
   }
   .skeleton-text {
@@ -376,4 +406,67 @@
     min-height: 44px;
     transform: translate3d(-50%, -50%, 0);
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   Y11 PE Hub — retro 8-bit arcade mode.
+
+   Toggled per manager from SquadBuilder ("8-bit mode"), mirrored onto
+   <html class="pixel-mode"> by components/PixelThemeSync.tsx. Purely
+   additive: with the class absent, every rule below is inert.
+   ──────────────────────────────────────────────────────────────────────── */
+.pixel-mode body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgb(0 0 0 / 0.22) 0px,
+    rgb(0 0 0 / 0.22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.pixel-mode img,
+.pixel-mode [data-slot="avatar-image"],
+.pixel-mode canvas {
+  image-rendering: pixelated;
+}
+
+.pixel-mode .font-display,
+.pixel-mode .font-score {
+  font-family: "Courier New", ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.06em;
+}
+
+.pixel-mode [data-slot="card"],
+.pixel-mode .card-sheen,
+.pixel-mode [data-slot="badge"] {
+  border-width: 2px;
+  border-radius: 0;
+  backdrop-filter: none;
+}
+
+/* Blocky turf: chunky 16px mow stripes instead of a smooth gradient. */
+.pixel-mode .pitch-bg,
+.pixel-mode .pitch-bg-premium {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgb(16 185 129 / 0.26) 0px,
+    rgb(16 185 129 / 0.26) 16px,
+    rgb(6 78 59 / 0.34) 16px,
+    rgb(6 78 59 / 0.34) 32px
+  );
+}
+
+/* Squared-off, chunky controls so buttons read like arcade UI. */
+.pixel-mode button:not([disabled]),
+.pixel-mode [role="tab"],
+.pixel-mode [data-slot="select-trigger"] {
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }

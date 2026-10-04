@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { useLocation } from "react-router";
 import { api } from "@/convex/_generated/api";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { MaintenanceScreen } from "@/components/MaintenanceScreen";
+import { isZeinSuperAdmin } from "@/lib/adminGuard";
 
 /**
  * Root-level maintenance gate.
@@ -27,6 +28,21 @@ export function MaintenanceGate({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const location = useLocation();
 
+  // ── Outage guard (fail-open only while UNKNOWN) ────────────────────────
+  // If the Convex backend is unreachable, both the status query and the auth
+  // state stay `undefined` forever. Without this grace timer that meant an
+  // infinite full-screen spinner and a completely blank site. After the
+  // grace period we render the app with the safe "not maintaining" /
+  // signed-out fallbacks; the moment real data arrives the gate re-evaluates
+  // and (if maintenance is actually on) swaps to the lock screen. Security
+  // is unaffected: admin routes and every backend mutation keep their own
+  // fail-closed Zein checks.
+  const [graceOver, setGraceOver] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setGraceOver(true), 4000);
+    return () => clearTimeout(timer);
+  }, []);
+
   // The sign-in page must stay reachable during maintenance so staff who
   // were signed out can still authenticate (they pass the gate right after).
   const isAuthRoute = location.pathname === "/auth";
@@ -35,8 +51,10 @@ export function MaintenanceGate({ children }: { children: ReactNode }) {
   // resolved yet (or the client is offline) — default to "not maintaining".
   const status = statusResult ?? { isMaintenanceMode: false };
 
-  // ROLE FIRST: wait until the viewer's identity is known before blocking.
-  if (statusResult === undefined || user === undefined) {
+  // ROLE FIRST: wait until the viewer's identity is known before blocking —
+  // but never wait forever: once the grace period expires with the backend
+  // still unreachable, fall through to the safe defaults below.
+  if ((statusResult === undefined || user === undefined) && !graceOver) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="text-muted-foreground size-8 animate-spin" />
@@ -47,8 +65,10 @@ export function MaintenanceGate({ children }: { children: ReactNode }) {
   // Cast to string: the stored union is "super_admin"|"moderator"|"manager",
   // but we also tolerate the legacy "admin" value defensively.
   const role: string = user?.role ?? "manager";
+  // Staff bypass: with the single Super-Admin restriction only Zein sees
+  // past a maintenance lock — every other account hits the maintenance screen.
   const isStaff =
-    role === "super_admin" || role === "moderator" || role === "admin";
+    role === "super_admin" && isZeinSuperAdmin(user);
 
   if (status.isMaintenanceMode && !isStaff && !isAuthRoute) {
     return <MaintenanceScreen />;

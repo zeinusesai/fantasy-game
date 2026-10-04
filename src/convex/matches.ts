@@ -9,6 +9,7 @@ import {
   STAGES,
 } from "./schema";
 import type { Position } from "./schema";
+import { normalizeCrest } from "./crests";
 import { computePlayerPoints, resolveScoringRules, captainMultiplier } from "./points";
 import { getSettingsRow, normalizeSettings } from "./adminConfig";
 import type { Id } from "./_generated/dataModel";
@@ -1062,6 +1063,735 @@ async function recalculateMatchPoints(
 
   return squads.length;
 }
+
+// ── Y11 PE Hub — weekly dynamic friendly match engine ────────────────────
+//
+// Teams are NEVER fixed. Each gameweek gets a fresh ad-hoc friendly:
+//   • custom dynamic team names per gameweek ("Team Alpha" vs "Team Omega",
+//     or a randomized captain draw like "Adam's 7" vs "Zein's 7"),
+//   • rosters drawn from the PRESERVED player database for that week only,
+//   • a preset vector crest (or an uploaded custom logo) per side.
+//
+// Legacy house fixtures keep working untouched: `homeHouse` / `awayHouse`
+// stay required by the schema, so a friendly stores the neutral
+// `group_stage` stage and overrides display through `homeTeamName` /
+// `awayTeamName` + `homeCrest` / `awayCrest`. Goals, assists, cards, clean
+// sheets and penalty shootouts all continue to work exactly as before —
+// no persistent house points are involved.
+
+const MAX_TEAM_NAME = 32;
+const FRIENDLY_ROSTER_SIZE = 7;
+const MAX_GW = 99; // GW1 … GW30+ with plenty of headroom
+
+/** Preset ad-hoc side names the generator draws from. */
+export const FRIENDLY_NAME_POOL = [
+  "Team Alpha",
+  "Team Omega",
+  "Team Phoenix",
+  "Team Titan",
+  "Team Vortex",
+  "Team Nova",
+  "Team Blitz",
+  "Team Riptide",
+] as const;
+
+/** Captain-style draw suffix, e.g. "Zein's 7". */
+const CAPTAIN_SUFFIX = "'s 7";
+
+function cleanTeamName(raw: unknown, fallback: string): string {
+  const value = typeof raw === "string" ? raw.trim().replace(/\s+/g, " ") : "";
+  if (value === "") return fallback;
+  return value.slice(0, MAX_TEAM_NAME);
+}
+
+function randomFrom<T>(items: readonly T[]): T | null {
+  if (items.length === 0) return null;
+  return items[Math.floor(Math.random() * items.length)] ?? null;
+}
+
+/** Fisher–Yates over a copy — never mutates the source array. */
+function shuffled<T>(items: readonly T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = out[i];
+    const b = out[j];
+    if (a !== undefined && b !== undefined) {
+      out[i] = b;
+      out[j] = a;
+    }
+  }
+  return out;
+}
+
+/** Active players from the preserved roster. Never deletes / writes. */
+async function activeRoster(ctx: MutationCtx): Promise<Id<"players">[]> {
+  try {
+    const players = await ctx.db.query("players").collect();
+    return players.filter((p) => p.active !== false).map((p) => p._id);
+  } catch {
+    return [];
+  }
+}
+
+/** Two disjoint random sides of up to 7 drawn from the preserved roster. */
+async function drawRandomSquads(
+  ctx: MutationCtx,
+): Promise<{ home: Id<"players">[]; away: Id<"players">[] }> {
+  const ids = shuffled(await activeRoster(ctx));
+  const perSide = Math.min(FRIENDLY_ROSTER_SIZE, Math.floor(ids.length / 2));
+  if (perSide <= 0) return { home: [], away: [] };
+  return {
+    home: ids.slice(0, perSide),
+    away: ids.slice(perSide, perSide * 2),
+  };
+}
+
+/** Validate + normalise a client-supplied roster against the roster DB. */
+async function normaliseSquad(
+  ctx: MutationCtx,
+  requested: Id<"players">[] | undefined,
+): Promise<{ squad: Id<"players">[]; error: string | null }> {
+  if (requested === undefined) return { squad: [], error: null };
+  if (!Array.isArray(requested)) return { squad: [], error: "Invalid roster." };
+  if (requested.length > FRIENDLY_ROSTER_SIZE) {
+    return { squad: [], error: `A friendly side is capped at ${FRIENDLY_ROSTER_SIZE} players.` };
+  }
+  const seen = new Set<string>();
+  const out: Id<"players">[] = [];
+  for (const id of requested) {
+    if (typeof id !== "string" || id === "") {
+      return { squad: [], error: "Invalid player in roster." };
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    // Resolving against `players` READS the preserved roster — it never
+    // writes — so an unknown/deleted id is rejected instead of stored.
+    const player = await ctx.db.get(id as Id<"players">).catch(() => null);
+    if (!player) return { squad: [], error: "One of those players no longer exists." };
+    out.push(id as Id<"players">);
+  }
+  return { squad: out, error: null };
+}
+
+/**
+ * Super Admin: create this week's dynamic friendly.
+ *
+ * `randomize: true` makes the SERVER draw the team names and both rosters,
+ * so the "Randomize Teams" button can never be spoofed by the client.
+ * Custom crests are normalised through `normalizeCrest` (preset id or a
+ * bounded http(s) / data:image URL — anything else becomes the default).
+ */
+export const createFriendlyMatch = mutation({
+  args: {
+    gameweek: v.number(),
+    homeTeamName: v.optional(v.string()),
+    awayTeamName: v.optional(v.string()),
+    homeCrest: v.optional(v.string()),
+    awayCrest: v.optional(v.string()),
+    homeSquad: v.optional(v.array(v.id("players"))),
+    awaySquad: v.optional(v.array(v.id("players"))),
+    kickoffLabel: v.optional(v.string()),
+    kickoffAt: v.optional(v.number()),
+    isKnockout: v.optional(v.boolean()),
+    randomize: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+
+    if (!Number.isInteger(args.gameweek) || args.gameweek < 1 || args.gameweek > MAX_GW) {
+      throw new Error(`Gameweek must be a whole number between 1 and ${MAX_GW}.`);
+    }
+
+    const randomize = args.randomize === true;
+    const homeName = cleanTeamName(
+      args.homeTeamName,
+      randomize ? (randomFrom(FRIENDLY_NAME_POOL) ?? "Team Alpha") : "Team Alpha",
+    );
+    let awayName = cleanTeamName(
+      args.awayTeamName,
+      randomize ? (randomFrom(FRIENDLY_NAME_POOL) ?? "Team Omega") : "Team Omega",
+    );
+    if (homeName === awayName) awayName = homeName === "Team Omega" ? "Team Alpha" : "Team Omega";
+    if (homeName === awayName) {
+      throw new Error("The two teams need different names.");
+    }
+
+    let homeSquad: Id<"players">[];
+    let awaySquad: Id<"players">[];
+    if (randomize) {
+      const drawn = await drawRandomSquads(ctx);
+      homeSquad = drawn.home;
+      awaySquad = drawn.away;
+    } else {
+      const home = await normaliseSquad(ctx, args.homeSquad);
+      if (home.error) throw new Error(home.error);
+      const away = await normaliseSquad(ctx, args.awaySquad);
+      if (away.error) throw new Error(away.error);
+      homeSquad = home.squad;
+      awaySquad = away.squad;
+      const overlap = homeSquad.filter((id) => awaySquad.includes(id));
+      if (overlap.length > 0) {
+        throw new Error("A player can only line up for one side of a friendly.");
+      }
+    }
+
+    const kickoffLabel =
+      typeof args.kickoffLabel === "string" && args.kickoffLabel.trim() !== ""
+        ? args.kickoffLabel.trim().slice(0, 60)
+        : undefined;
+
+    return ctx.db.insert("matches", {
+      stage: "group_stage",
+      // Neutral legacy slots — the friendly never depends on house points.
+      homeHouse: "Fire",
+      awayHouse: "Water",
+      homeGoals: 0,
+      awayGoals: 0,
+      status: "scheduled",
+      createdAt: Date.now(),
+      // ── dynamic friendly metadata ──
+      friendly: true,
+      gameweek: args.gameweek,
+      homeTeamName: homeName,
+      awayTeamName: awayName,
+      homeCrest: normalizeCrest(args.homeCrest),
+      awayCrest: normalizeCrest(args.awayCrest),
+      homeSquad,
+      awaySquad,
+      drawnAt: Date.now(),
+      kickoffLabel,
+      kickoffAt: Number.isFinite(args.kickoffAt) ? args.kickoffAt : undefined,
+      isKnockout: args.isKnockout === true,
+    });
+  },
+});
+
+/**
+ * Super Admin: re-draw or hand-edit an existing weekly friendly.
+ * Same rules as creation; partial updates are fine (undefined = keep).
+ */
+export const updateFriendlyMatch = mutation({
+  args: {
+    matchId: v.id("matches"),
+    homeTeamName: v.optional(v.string()),
+    awayTeamName: v.optional(v.string()),
+    homeCrest: v.optional(v.string()),
+    awayCrest: v.optional(v.string()),
+    homeSquad: v.optional(v.array(v.id("players"))),
+    awaySquad: v.optional(v.array(v.id("players"))),
+    gameweek: v.optional(v.number()),
+    randomize: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const match = await ctx.db.get(args.matchId);
+    if (!match) throw new Error("That fixture no longer exists.");
+
+    const patch: Record<string, unknown> = {};
+    if (args.gameweek !== undefined) {
+      if (!Number.isInteger(args.gameweek) || args.gameweek < 1 || args.gameweek > MAX_GW) {
+        throw new Error(`Gameweek must be a whole number between 1 and ${MAX_GW}.`);
+      }
+      patch.gameweek = args.gameweek;
+    }
+    if (args.homeTeamName !== undefined) patch.homeTeamName = cleanTeamName(args.homeTeamName, match.homeTeamName ?? "Team Alpha");
+    if (args.awayTeamName !== undefined) patch.awayTeamName = cleanTeamName(args.awayTeamName, match.awayTeamName ?? "Team Omega");
+    if ((patch.homeTeamName ?? match.homeTeamName) === (patch.awayTeamName ?? match.awayTeamName)) {
+      throw new Error("The two teams need different names.");
+    }
+    if (args.homeCrest !== undefined) patch.homeCrest = normalizeCrest(args.homeCrest);
+    if (args.awayCrest !== undefined) patch.awayCrest = normalizeCrest(args.awayCrest);
+
+    if (args.randomize === true) {
+      const drawn = await drawRandomSquads(ctx);
+      patch.homeSquad = drawn.home;
+      patch.awaySquad = drawn.away;
+      if (args.homeTeamName === undefined) {
+        patch.homeTeamName = randomFrom(FRIENDLY_NAME_POOL) ?? match.homeTeamName ?? "Team Alpha";
+      }
+      if (args.awayTeamName === undefined) {
+        patch.awayTeamName = randomFrom(FRIENDLY_NAME_POOL) ?? match.awayTeamName ?? "Team Omega";
+      }
+      if (patch.homeTeamName === patch.awayTeamName) {
+        patch.awayTeamName = "Team Omega";
+        if (patch.homeTeamName === patch.awayTeamName) patch.awayTeamName = "Team Alpha";
+      }
+    } else {
+      if (args.homeSquad !== undefined) {
+        const home = await normaliseSquad(ctx, args.homeSquad);
+        if (home.error) throw new Error(home.error);
+        patch.homeSquad = home.squad;
+      }
+      if (args.awaySquad !== undefined) {
+        const away = await normaliseSquad(ctx, args.awaySquad);
+        if (away.error) throw new Error(away.error);
+        patch.awaySquad = away.squad;
+      }
+      const h = (patch.homeSquad ?? match.homeSquad ?? []) as Id<"players">[];
+      const a = (patch.awaySquad ?? match.awaySquad ?? []) as Id<"players">[];
+      if (h.some((id) => a.includes(id))) {
+        throw new Error("A player can only line up for one side of a friendly.");
+      }
+    }
+
+    patch.friendly = true;
+    patch.drawnAt = Date.now();
+    await ctx.db.patch(args.matchId, patch);
+    return { ok: true as const };
+  },
+});
+
+/** Fixtures for one gameweek (with the roster resolved for the generator). */
+export const listGameweekMatches = query({
+  args: { gameweek: v.number() },
+  handler: async (ctx, { gameweek }) => {
+    try {
+      const matches = await ctx.db
+        .query("matches")
+        .withIndex("by_gameweek", (q) => q.eq("gameweek", gameweek))
+        .collect();
+      const ids = new Set<string>();
+      for (const m of matches) {
+        for (const id of [...(m.homeSquad ?? []), ...(m.awaySquad ?? [])]) ids.add(String(id));
+      }
+      const players = await Promise.all(
+        [...ids].map((id) => ctx.db.get(id as Id<"players">).catch(() => null)),
+      );
+      const byId = new Map(
+        players.filter((p): p is NonNullable<typeof p> => p !== null).map((p) => [String(p._id), p]),
+      );
+      return matches
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map((m) => ({
+          ...m,
+          homeRoster: (m.homeSquad ?? []).map((id) => byId.get(String(id)) ?? null).filter(Boolean),
+          awayRoster: (m.awaySquad ?? []).map((id) => byId.get(String(id)) ?? null).filter(Boolean),
+        }));
+    } catch {
+      return [];
+    }
+  },
+});
+
+/**
+ * Server-side "Randomize Teams" preview used by the generator UI before the
+ * fixture is saved. Super Admin only; read-only (never touches the roster).
+ */
+export const previewRandomFriendly = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await requireSuperAdmin(ctx);
+    const squads = await drawRandomSquads(ctx);
+    const names = shuffled(FRIENDLY_NAME_POOL).slice(0, 2);
+    return {
+      homeTeamName: names[0] ?? "Team Alpha",
+      awayTeamName: names[1] ?? "Team Omega",
+      homeSquad: squads.home,
+      awaySquad: squads.away,
+    };
+  },
+});
+
+/** Captain-draw naming helper: "Zein's 7" from a manager's username. */
+export const captainTeamName = (username: string | null | undefined): string => {
+  const clean = typeof username === "string" ? username.trim().slice(0, 20) : "";
+  return `${clean === "" ? "Team" : clean}${CAPTAIN_SUFFIX}`;
+};
+
+// ── Y11 PE Hub — sequential season gameweeks (GW1 … GW30+) ────────────────
+
+const GAMEWEEK_STATUSES = ["open", "locked", "calculating", "closed"] as const;
+type GameweekStatus = (typeof GAMEWEEK_STATUSES)[number];
+
+function isGameweekStatus(value: unknown): value is GameweekStatus {
+  return typeof value === "string" && (GAMEWEEK_STATUSES as readonly string[]).includes(value);
+}
+
+function cleanGwNumber(n: number): number {
+  if (!Number.isInteger(n) || n < 1 || n > MAX_GW) {
+    throw new Error(`Gameweek must be a whole number between 1 and ${MAX_GW}.`);
+  }
+  return n;
+}
+
+/** Every season gameweek, GW1 first. Public: managers need to see status. */
+export const listSeasonGameweeks = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const rows = await ctx.db.query("seasonGameweeks").collect();
+      return rows.sort((a, b) => a.number - b.number);
+    } catch {
+      return [];
+    }
+  },
+});
+
+/** Create (or relabel) one gameweek in the PE calendar. Super Admin only. */
+export const createSeasonGameweek = mutation({
+  args: {
+    number: v.number(),
+    title: v.optional(v.string()),
+    deadlineAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(args.number);
+    const title =
+      typeof args.title === "string" && args.title.trim() !== ""
+        ? args.title.trim().slice(0, 60)
+        : undefined;
+    const existing = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...(title !== undefined ? { title } : {}),
+        ...(args.deadlineAt !== undefined ? { deadlineAt: args.deadlineAt } : {}),
+      });
+      return existing._id;
+    }
+    const next = (await ctx.db
+      .query("seasonGameweeks")
+      .collect())
+      .reduce((max, r) => Math.max(max, r.number), 0);
+    if (number > next + 1) {
+      throw new Error(`Create GW${next + 1} first — gameweeks are sequential.`);
+    }
+    return ctx.db.insert("seasonGameweeks", {
+      number,
+      label: `GW${number}`,
+      title,
+      status: "open",
+      openedAt: Date.now(),
+      ...(args.deadlineAt !== undefined ? { deadlineAt: args.deadlineAt } : {}),
+    });
+  },
+});
+
+/** Seed GW1 … `upTo` in one call (used by the Season tab setup button). */
+export const ensureSeasonGameweeks = mutation({
+  args: { upTo: v.number() },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const upTo = cleanGwNumber(args.upTo);
+    const rows = await ctx.db.query("seasonGameweeks").collect();
+    const have = new Set(rows.map((r) => r.number));
+    let created = 0;
+    for (let n = 1; n <= upTo; n++) {
+      if (have.has(n)) continue;
+      await ctx.db.insert("seasonGameweeks", {
+        number: n,
+        label: `GW${n}`,
+        status: n === 1 ? "open" : "locked",
+        ...(n === 1 ? { openedAt: Date.now() } : {}),
+      });
+      created += 1;
+    }
+    return { created };
+  },
+});
+
+/**
+ * Drive one gameweek's lifecycle: open → locked → calculating → closed.
+ * Super Admin only. Validates the status so a typo can never be stored.
+ */
+export const setSeasonGameweekStatus = mutation({
+  args: { number: v.number(), status: v.string() },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(args.number);
+    const status = String(args.status ?? "").trim().toLowerCase();
+    if (!isGameweekStatus(status)) {
+      throw new Error(`Status must be one of: ${GAMEWEEK_STATUSES.join(", ")}.`);
+    }
+    const row = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (!row) throw new Error(`Gameweek ${number} does not exist yet.`);
+    const now = Date.now();
+    await ctx.db.patch(row._id, {
+      status,
+      ...(status === "open" ? { openedAt: now } : {}),
+      ...(status === "closed" ? { closedAt: now } : {}),
+    });
+    return { number, status };
+  },
+});
+
+/** Set / clear a gameweek's transfer deadline. Super Admin only. */
+export const setSeasonGameweekDeadline = mutation({
+  args: { number: v.number(), deadlineAt: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(args.number);
+    const row = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (!row) throw new Error(`Gameweek ${number} does not exist yet.`);
+    const valid =
+      args.deadlineAt !== undefined && Number.isFinite(args.deadlineAt) && args.deadlineAt > 0
+        ? args.deadlineAt
+        : undefined;
+    await ctx.db.patch(row._id, { deadlineAt: valid });
+    return { number, deadlineAt: valid ?? null };
+  },
+});
+
+/** Remove a gameweek that was created by mistake. Super Admin only. */
+export const deleteSeasonGameweek = mutation({
+  args: { number: v.number() },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(args.number);
+    const row = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (!row) return { deleted: false as const };
+    await ctx.db.delete(row._id);
+    return { deleted: true as const };
+  },
+});
+
+/**
+ * Y11 PE Hub — numeric skill tiers, per-gameweek averages and 3-week form.
+ *
+ * Replaces star ratings with a numeric Tier 1–5 badge plus the raw numbers a
+ * manager actually cares about: average points per gameweek, goals, assists,
+ * clean sheets and a 🔥 Hot / ❄️ Cold trend over the last three fixtures.
+ *
+ * READ-ONLY over the preserved `players` / `matchPlayers` tables — nothing is
+ * written, so the roster database is untouched. Total: a storage hiccup
+ * degrades to an empty map instead of rejecting the query.
+ */
+export const getPlayerSkillStats = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const players = await ctx.db.query("players").collect();
+      const lines = await ctx.db.query("matchPlayers").collect();
+
+      const byPlayer = new Map<
+        string,
+        { points: number[]; goals: number; assists: number; cs: number; apps: number }
+      >();
+      for (const line of lines) {
+        const key = String(line.playerId);
+        const cur = byPlayer.get(key) ?? { points: [], goals: 0, assists: 0, cs: 0, apps: 0 };
+        cur.goals += Number(line.goals) || 0;
+        cur.assists += Number(line.assists) || 0;
+        cur.cs += line.cleanSheet === true ? 1 : 0;
+        cur.apps += 1;
+        cur.points.push(Number(line.fantasyPoints) || 0);
+        byPlayer.set(key, cur);
+      }
+
+      // Price ladder used only when a player has no appearances yet, so a
+      // brand-new roster still gets a sensible spread of tiers.
+      const prices = players.map((p) => Number(p.price) || 0);
+      const sortedPrices = [...prices].sort((a, b) => a - b);
+      const priceRank = (price: number) => {
+        if (sortedPrices.length <= 1) return 0.5;
+        let below = 0;
+        for (const v of sortedPrices) if (v <= price) below += 1;
+        return below / sortedPrices.length;
+      };
+
+      const tierFromAvg = (avg: number) => {
+        if (avg >= 20) return 5;
+        if (avg >= 14) return 4;
+        if (avg >= 9) return 3;
+        if (avg >= 4) return 2;
+        return 1;
+      };
+      const tierFromPrice = (rank: number) => {
+        if (rank >= 0.9) return 5;
+        if (rank >= 0.7) return 4;
+        if (rank >= 0.45) return 3;
+        if (rank >= 0.2) return 2;
+        return 1;
+      };
+
+      return players.map((p) => {
+        const stat = byPlayer.get(String(p._id)) ?? {
+          points: [],
+          goals: 0,
+          assists: 0,
+          cs: 0,
+          apps: 0,
+        };
+        const total = stat.points.reduce((sum, n) => sum + n, 0);
+        const avg = stat.apps > 0 ? total / stat.apps : 0;
+        const recent = stat.points.slice(-3);
+        const last = recent[recent.length - 1] ?? null;
+        const prev = recent[recent.length - 2] ?? null;
+
+        let form: "hot" | "cold" | "steady" = "steady";
+        if (recent.length > 0 && last !== null) {
+          if (last >= 10 && (prev === null || last >= prev)) form = "hot";
+          else if (last <= 3 && recent.length > 1) form = "cold";
+        }
+
+        const tier =
+          stat.apps > 0 ? tierFromAvg(avg) : tierFromPrice(priceRank(Number(p.price) || 0));
+
+        return {
+          playerId: p._id,
+          tier,
+          avg: Math.round(avg * 10) / 10,
+          total: Math.round(total),
+          apps: stat.apps,
+          goals: stat.goals,
+          assists: stat.assists,
+          cleanSheets: stat.cs,
+          form,
+          recent: recent.map((n) => Math.round(n)),
+        };
+      });
+    } catch {
+      return [];
+    }
+  },
+});
+
+/**
+ * Y11 PE Hub — Gameweek recap engine.
+ *
+ * Produces a dramatic three-paragraph news write-up for the most recent
+ * settled gameweek: the top manager, the biggest faller, and the captain
+ * failures — plus the weekly Banter & Blunder badges that get displayed on
+ * the dashboard feed.
+ *
+ * Purely derived from stored results (no external service), so it can never
+ * fail a page load: every branch degrades to `null` and the card hides itself.
+ */
+export const getGameweekRecap = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const squads = await ctx.db.query("squads").collect();
+      const users = await ctx.db.query("users").collect();
+      const scores = await ctx.db.query("matchScores").collect();
+      const lines = await ctx.db.query("matchPlayers").collect();
+      if (squads.length === 0 || scores.length === 0) return null;
+
+      const nameOf = (userId: unknown): string => {
+        const u = users.find((row) => String(row._id) === String(userId));
+        return u?.teamName?.trim() || u?.username?.trim() || "A manager";
+      };
+
+      const totals = new Map<string, number>();
+      for (const s of scores) {
+        const key = String(s.userId);
+        totals.set(key, (totals.get(key) ?? 0) + (Number(s.points) || 0));
+      }
+      const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+      if (ranked.length === 0) return null;
+
+      const top = ranked[0]!;
+      const bottom = ranked[ranked.length - 1]!;
+      const average = ranked.reduce((sum, r) => sum + r[1], 0) / ranked.length;
+
+      const captainPoints = (captainId: unknown): number => {
+        if (captainId === null || captainId === undefined) return 0;
+        return lines
+          .filter((l) => String(l.playerId) === String(captainId))
+          .reduce((sum, l) => sum + (Number(l.fantasyPoints) || 0), 0);
+      };
+
+      const ghostCaptains = squads
+        .filter((s) => totals.has(String(s.userId)) && captainPoints(s.captainId) <= 0)
+        .map((s) => ({ userId: s.userId, team: nameOf(s.userId) }));
+
+      const bestCaptain = squads
+        .map((s) => ({ team: nameOf(s.userId), pts: captainPoints(s.captainId) }))
+        .filter((r) => r.pts > 0)
+        .sort((a, b) => b.pts - a.pts)[0] ?? null;
+
+      const swing = Math.round((top[1] - bottom[1]) * 10) / 10;
+      const topName = nameOf(top[0]);
+      const bottomName = nameOf(bottom[0]);
+      const ghostNames = ghostCaptains.slice(0, 3).map((g) => g.team);
+
+      const paragraphs = [
+        `Gameweek review — ${topName} top the pile. A ruthless ${top[1].toFixed(1)}-point haul puts them ${Math.max(
+          0,
+          Math.round((top[1] - average) * 10) / 10,
+        ).toFixed(1)} clear of the pack average of ${average.toFixed(1)}, and the chasing managers have no answer. Every pick landed, the armband paid dividends, and the table has a new benchmark to chase next week.`,
+        `The biggest fall of the week belongs to ${bottomName}, who banked just ${bottom[1].toFixed(1)} points — a ${swing.toFixed(
+          1,
+        )}-point swing off the pace at the top. Formations looked blunt, the budget was spread thin, and a single blank week has turned a promising start into damage limitation.`,
+        ghostNames.length > 0
+          ? `Then came the captaincy chaos. ${ghostNames.join(
+              ", ",
+            )} all handed the armband to a player who returned a grand total of nothing — the Ghost Captain curse is alive and well. ${
+              bestCaptain
+                ? `At the other end, ${bestCaptain.team}'s skipper delivered ${bestCaptain.pts.toFixed(1)} points and made the difference.`
+                : "Nobody's captain managed to fire this week."
+            }`
+          : `Captaincy was kind this week — ${
+              bestCaptain
+                ? `${bestCaptain.team}'s skipper led the way with ${bestCaptain.pts.toFixed(1)} points.`
+                : "every armband returned a return."
+            } Fresh squads, fresh gameweek, and the table is still wide open.`,
+      ];
+
+      type RecapBadge = {
+        emoji: string;
+        label: string;
+        note: string;
+        userId: string | null;
+        team: string;
+      };
+      const badges: RecapBadge[] = [];
+
+      if (ghostCaptains.length > 0) {
+        badges.push({
+          emoji: "👻",
+          label: "Ghost Captain",
+          note: `${ghostCaptains.length} manager${ghostCaptains.length === 1 ? "" : "s"} handed the armband to a player who scored 0.`,
+          userId: String(ghostCaptains[0]!.userId),
+          team: ghostCaptains[0]!.team,
+        });
+      }
+      if (bottom[1] < average) {
+        badges.push({
+          emoji: "🪑",
+          label: "Bench Disaster",
+          note: `${bottomName} finished ${swing.toFixed(1)} points off the top on ${bottom[1].toFixed(1)}.`,
+          userId: String(bottom[0]),
+          team: bottomName,
+        });
+      }
+      if (bestCaptain && bestCaptain.pts >= 15) {
+        badges.push({
+          emoji: "🔥",
+          label: "Armband Genius",
+          note: `${bestCaptain.team}'s captain returned ${bestCaptain.pts.toFixed(1)} points.`,
+          userId: null,
+          team: bestCaptain.team,
+        });
+      }
+
+      return {
+        headline: `${topName} seize the gameweek`,
+        topTeam: topName,
+        topPoints: Math.round(top[1] * 10) / 10,
+        managerCount: ranked.length,
+        paragraphs,
+        badges,
+        generatedAt: Date.now(),
+      };
+    } catch {
+      return null;
+    }
+  },
+});
 
 /** Public query so the UI can reflect the live points total for a match. */
 export const getMatchPointsTotal = query({

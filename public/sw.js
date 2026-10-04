@@ -1,4 +1,4 @@
-/* Year 11 Interhouse — minimal, zero-risk service worker.
+/* Y11 PE Hub — minimal, zero-risk service worker.
  * Installs instantly and passes every request straight to the network
  * (no aggressive caching) so the app can be installed to the home screen
  * while never serving stale content. */

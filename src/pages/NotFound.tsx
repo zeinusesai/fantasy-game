@@ -15,8 +15,11 @@ export default function NotFound() {
         <div className="max-w-5xl mx-auto relative px-4">
           <div className="flex items-center justify-center min-h-[200px]">
             <div className="text-center">
-              <h1 className="text-4xl font-bold text-gray-900 mb-4">404</h1>
-              <p className="text-lg text-gray-600">Page Not Found</p>
+              <p className="text-muted-foreground text-xs font-semibold uppercase tracking-widest">
+                Y11 PE Hub
+              </p>
+              <h1 className="text-foreground mb-2 text-4xl font-bold">404</h1>
+              <p className="text-muted-foreground text-lg">Page Not Found</p>
             </div>
           </div>
         </div>
