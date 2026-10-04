@@ -157,6 +157,7 @@ import {
   CalendarRange,
   CheckCircle2,
   Crown,
+  FileUp,
   RefreshCw,
   ImagePlus,
   Inbox,
@@ -182,6 +183,7 @@ import {
 import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { MatchControlCenter } from "@/components/MatchControlCenter";
+import { PlayerCsvImportTab } from "@/components/PlayerCsvImportTab";
 import { GameweeksTab } from "@/components/GameweeksTab";
 import { SeasonTab } from "@/components/SeasonTab";
 import { CustomizationTab } from "@/components/CustomizationTab";
@@ -357,6 +359,11 @@ export default function Admin() {
                 <UserCog className="size-3.5" /> Roles
               </TabsTrigger>
             )}
+            {isSuper && (
+              <TabsTrigger value="csv-import" className="gap-1.5">
+                <FileUp className="size-3.5" /> Import CSV
+              </TabsTrigger>
+            )}
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
             {isSuper && <TabsTrigger value="gameweeks">Gameweeks</TabsTrigger>}
             {isSuper && (
@@ -392,6 +399,11 @@ export default function Admin() {
           <TabsContent value="players" className="mt-4">
             <PlayersTab isSuper={isSuper} />
           </TabsContent>
+          {isSuper && (
+            <TabsContent value="csv-import" className="mt-4">
+              <PlayerCsvImportTab />
+            </TabsContent>
+          )}
           <TabsContent value="requests" className="mt-4">
             <RequestsTab
               requests={requests}

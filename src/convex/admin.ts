@@ -19,8 +19,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 // ── ABSOLUTE PLAYER-DATABASE PRESERVATION GUARANTEE ────────────────────────
 // `transitionToPEHub` NEVER reads, writes or deletes the `players` table.
 // Prices (Cr), positions (GK/DEF/MID/FWD), baseline stats and uploaded photo
-// assets are untouched by construction — there is deliberately no
-// `ctx.db.*` call against "players" anywhere in this file.
+// assets are untouched by construction — the transition handler contains no
+// `ctx.db.*` call against "players".
+//
+// The ONE deliberate exception in this file is `importPlayersFromCSV`, the
+// Super-Admin's explicit, audited CSV import: it upserts ONLY the imported
+// fields (name, house, position, price) and never deletes a row, never clears
+// a photo, and never resets recorded stats. Nothing else here touches players.
 //
 // ── STORE / COSMETIC PRESERVATION ──────────────────────────────────────────
 // `cosmeticUnlocks` (the earned-cosmetic store) and `config` (store items,
@@ -411,5 +416,145 @@ export const listTransitionTargets = query({
     } catch {
       return [];
     }
+  },
+});
+
+// ── Y11 PE Hub — CSV player import (Super Admin only) ──────────────────────
+
+/** Zeroed baseline stats so a freshly imported player scores sanely. */
+const BASELINE_PLAYER_STATS = {
+  goals: 0,
+  assists: 0,
+  apps: 0,
+  cleanSheet: false,
+  saves: 0,
+  yellowCards: 0,
+  redCards: 0,
+  ownGoals: 0,
+  potm: false,
+  rating: 6,
+} as const;
+
+/** Case-insensitive match against the four real houses, or null. */
+function matchHouse(raw: string): Doc<"players">["house"] | null {
+  const key = raw.trim().toLowerCase();
+  const found = (["Fire", "Earth", "Wind", "Water"] as const).find(
+    (h) => h.toLowerCase() === key,
+  );
+  return found ?? null;
+}
+
+/**
+ * Bulk upsert of the player roster from a parsed CSV.
+ *
+ * Super-Admin only (`requireSuperAdmin`: role AND Zein identity). Matching is
+ * by lowercased name so a re-import updates the existing card instead of
+ * creating a duplicate. An update touches ONLY the imported fields — an
+ * uploaded photo, availability label and any recorded stats are preserved, and
+ * nothing is ever deleted. Invalid rows are reported, never silently dropped.
+ */
+export const importPlayersFromCSV = mutation({
+  args: {
+    players: v.array(
+      v.object({
+        name: v.string(),
+        house: v.string(),
+        position: v.union(
+          v.literal("GK"),
+          v.literal("DEF"),
+          v.literal("MID"),
+          v.literal("FWD"),
+        ),
+        price: v.number(),
+      }),
+    ),
+  },
+  handler: async (
+    ctx,
+    { players },
+  ): Promise<{
+    importedCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    errors: string[];
+  }> => {
+    await requireSuperAdmin(ctx);
+
+    const errors: string[] = [];
+    let importedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    // One pass over the roster, keyed by lowercased name.
+    const existing = new Map<string, Doc<"players">>();
+    for (const player of await ctx.db.query("players").collect()) {
+      existing.set(player.name.trim().toLowerCase(), player);
+    }
+
+    const handled = new Set<string>();
+
+    for (const row of players) {
+      const name = row.name.trim();
+      if (!name) {
+        skippedCount++;
+        errors.push("Skipped a row with an empty player name.");
+        continue;
+      }
+
+      const key = name.toLowerCase();
+      if (handled.has(key)) {
+        skippedCount++;
+        errors.push(`"${name}" appears more than once — only the first row was used.`);
+        continue;
+      }
+      handled.add(key);
+
+      const house = matchHouse(row.house);
+      if (!house) {
+        skippedCount++;
+        errors.push(
+          `"${name}": unknown house "${row.house}" (expected Fire, Earth, Wind or Water).`,
+        );
+        continue;
+      }
+
+      const price = Number(row.price);
+      if (!Number.isFinite(price) || price < 0) {
+        skippedCount++;
+        errors.push(`"${name}": invalid price "${row.price}".`);
+        continue;
+      }
+
+      const match = existing.get(key);
+      if (match) {
+        // Patch ONLY what the CSV carries; photo/stats/status/active survive.
+        const patch: Partial<Doc<"players">> = {};
+        if (match.name !== name) patch.name = name;
+        if (match.house !== house) patch.house = house;
+        if (match.position !== row.position) patch.position = row.position;
+        if (match.price !== price) patch.price = price;
+        if (Object.keys(patch).length > 0) await ctx.db.patch(match._id, patch);
+        updatedCount++;
+      } else {
+        await ctx.db.insert("players", {
+          name,
+          house,
+          position: row.position,
+          price,
+          active: true,
+          stats: { ...BASELINE_PLAYER_STATS },
+        });
+        importedCount++;
+      }
+    }
+
+    await audit(
+      ctx,
+      "import_players_csv",
+      "players",
+      `+${importedCount} new, ${updatedCount} updated, ${skippedCount} skipped`,
+    );
+
+    return { importedCount, updatedCount, skippedCount, errors };
   },
 });
