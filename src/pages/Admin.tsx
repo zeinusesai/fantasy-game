@@ -1,6 +1,8 @@
 import { useMutation, useQuery } from "convex/react";
+import { Navigate } from "react-router";
 import { api } from "@/convex/_generated/api";
 import { AppNav } from "@/components/AppNav";
+import { isZeinSuperAdmin } from "@/lib/adminGuard";
 import { HouseBadge, HouseCrest, PositionChip } from "@/components/houses";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -152,6 +154,7 @@ function PlayerCellPhoto({
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  CalendarRange,
   CheckCircle2,
   Crown,
   RefreshCw,
@@ -180,6 +183,7 @@ import { useMemo, useState } from "react";
 import { PageLoading } from "@/components/PageLoading";
 import { MatchControlCenter } from "@/components/MatchControlCenter";
 import { GameweeksTab } from "@/components/GameweeksTab";
+import { SeasonTab } from "@/components/SeasonTab";
 import { CustomizationTab } from "@/components/CustomizationTab";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { AuditLogTab } from "@/components/AuditLogTab";
@@ -188,9 +192,12 @@ import { BulkOpsTab } from "@/components/BulkOpsTab";
 
 export default function Admin() {
   const { user, isLoading: authLoading } = useAuth();
-  const role = user?.role ?? "manager";
-  const isSuper = role === "super_admin";
-  const isModerator = role === "moderator";
+  // ── SINGLE SUPER-ADMIN RESTRICTION ────────────────────────────────────
+  // The Super-Admin panel is locked to Zein: the `super_admin` role AND the
+  // Zein identity must BOTH match. Every backend handler re-checks this, so
+  // this gate is presentation-only hardening on top of server enforcement.
+  const isSuper = isZeinSuperAdmin(user);
+  const isModerator = false; // moderators no longer reach this surface.
 
   // ── Price requests — live subscription, null-safe ([] while loading or
   //    for viewers without access). Owned here so the header badge and the
@@ -280,6 +287,9 @@ export default function Admin() {
 
   const [adjustFor, setAdjustFor] = useState<PriceRequest | null>(null);
   const [adjustPrice, setAdjustPrice] = useState("");
+  // Declared with the rest of the state so the hook order is identical on
+  // every render (it must not sit below the access-gate early returns).
+  const [tab, setTab] = useState("players");
 
   const handleReview = async (
     requestId: Id<"priceRequests">,
@@ -310,45 +320,25 @@ export default function Admin() {
     );
   }
 
-  if (!isSuper && !isModerator) {
-    return (
-      <AppNav>
-        <Card className="border-border/80">
-          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-            <Lock className="text-muted-foreground size-10" />
-            <h2 className="font-display text-2xl font-bold">Admin access only</h2>
-            <p className="text-muted-foreground max-w-sm text-sm">
-              You don't have permission to view this page.
-            </p>
-          </CardContent>
-        </Card>
-      </AppNav>
-    );
+  // UI protection: any account other than the Super Admin is bounced out of
+  // the route entirely — the panel is never rendered, mounted or reachable.
+  if (!isSuper) {
+    return <Navigate to="/dashboard" replace />;
   }
-
-  const [tab, setTab] = useState("players");
 
   return (
     <AppNav>
-      <div className="mx-auto w-full max-w-md space-y-6 sm:max-w-7xl">
+      <div className="mx-auto w-full max-w-md space-y-6 p-6 sm:max-w-7xl">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Admin panel</h1>
+            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Y11 PE Hub — Admin panel</h1>
             <p className="text-muted-foreground text-sm">
-              {isSuper
-                ? "Full system control — users, budget, players, matches and logos."
-                : "Player registry — you can add players and set values & houses only."}
+              Full system control — users, budget, players, matches, gameweeks and logos.
             </p>
           </div>
-          {isSuper ? (
-            <Badge className="bg-primary text-primary-foreground gap-1.5 px-3 py-1.5">
-              <Crown className="size-4" /> Super Admin
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="gap-1.5 px-3 py-1.5">
-              <Shield className="size-4" /> Moderator — limited scope
-            </Badge>
-          )}
+          <Badge className="bg-primary text-primary-foreground gap-1.5 px-3 py-1.5">
+            <Crown className="size-4" /> Super Admin · Zein
+          </Badge>
         </div>
 
         <Tabs value={tab} onValueChange={setTab} defaultValue="players">
@@ -369,6 +359,11 @@ export default function Admin() {
             )}
             {isSuper && <TabsTrigger value="matches">Matches</TabsTrigger>}
             {isSuper && <TabsTrigger value="gameweeks">Gameweeks</TabsTrigger>}
+            {isSuper && (
+              <TabsTrigger value="season" className="gap-1.5">
+                <CalendarRange className="size-3.5" /> Season
+              </TabsTrigger>
+            )}
             {isSuper && (
               <TabsTrigger value="customize" className="gap-1.5">
                 <SlidersHorizontal className="size-3.5" /> Customize
@@ -427,6 +422,9 @@ export default function Admin() {
               </TabsContent>
               <TabsContent value="gameweeks" className="mt-4">
                 <GameweeksTab />
+              </TabsContent>
+              <TabsContent value="season" className="mt-4">
+                <SeasonTab />
               </TabsContent>
               <TabsContent value="customize" className="mt-4">
                 <CustomizationTab />

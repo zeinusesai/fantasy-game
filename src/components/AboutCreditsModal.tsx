@@ -32,7 +32,7 @@ export function AboutCreditsModal({
             <Swords className="text-primary size-4" /> About & Credits
           </DialogTitle>
           <DialogDescription>
-            Year 11 Interhouse — Tournament & Fantasy League
+            Y11 PE Hub — Year 11 PE · 7-a-side Fantasy League
           </DialogDescription>
         </DialogHeader>
 

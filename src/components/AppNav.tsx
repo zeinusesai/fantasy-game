@@ -33,6 +33,7 @@ import type { ReactNode } from "react";
 import { useNavigate, NavLink } from "react-router";
 import { Bell } from "lucide-react";
 import { UnreadBadge, DirectMessages } from "@/components/DirectMessages";
+import { isZeinSuperAdmin } from "@/lib/adminGuard";
 import { MessageSquare } from "lucide-react";
 import { useState } from "react";
 
@@ -48,7 +49,10 @@ export function AppNav({ children }: { children: ReactNode }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const role = user?.role ?? "manager";
-  const isAdmin = role === "super_admin" || role === "moderator";
+  // Single Super-Admin restriction: the Admin entry point is only rendered for
+  // Zein. Non-admins never see a link they cannot use, and the `/admin` route
+  // itself redirects everyone else away (see pages/Admin.tsx).
+  const isAdmin = isZeinSuperAdmin(user);
   const avatar = user?.image?.startsWith("data:") || user?.image?.startsWith("http")
     ? user.image
     : avatarPresetUrl(user?.image);
@@ -82,7 +86,7 @@ export function AppNav({ children }: { children: ReactNode }) {
               <Sword className="size-4" />
             </span>
             <span className="font-display hidden text-lg font-bold tracking-wide sm:block">
-              YEAR 11 <span className="text-primary">INTERHOUSE</span>
+              Y11 <span className="text-primary">PE HUB</span>
             </span>
           </button>
 

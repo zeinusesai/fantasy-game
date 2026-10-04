@@ -1,4 +1,4 @@
-// Year 11 Interhouse — PWA push notifications (deadline & result alerts).
+// Y11 PE Hub — PWA push notifications (deadline & result alerts).
 //
 // Design notes (zero-risk defaults):
 //  - Permission is only requested from an explicit user click ("Enable alerts").

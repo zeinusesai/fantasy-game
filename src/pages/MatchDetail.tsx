@@ -34,6 +34,7 @@ import {
   ShootoutSummary,
 } from "@/components/ScoreLine";
 import { DEFAULT_FORMATION, inferFormation, resolveFormation } from "@/convex/formations";
+import { crestPreset, normalizeCrest } from "@/convex/crests";
 import type { Position } from "@/convex/schema";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 
@@ -41,6 +42,58 @@ type PlayerDoc = Doc<"players">;
 type MatchDoc = Doc<"matches">;
 type TimelineEvent = NonNullable<MatchDoc["timelineEvents"]>[number];
 type RatingRow = NonNullable<MatchDoc["playerRatings"]>[number];
+
+/**
+ * Y11 PE Hub — a weekly friendly carries its own dynamic team names and
+ * crests. When they are absent (a legacy house fixture) we fall straight back
+ * to the stored house label, so old matches render exactly as they always did.
+ * Both helpers are total: a blank / corrupt value can never render as
+ * "undefined".
+ */
+const homeLabelOf = (m: MatchDoc): string => {
+  const name = typeof m.homeTeamName === "string" ? m.homeTeamName.trim() : "";
+  return name !== "" ? name : m.homeHouse;
+};
+const awayLabelOf = (m: MatchDoc): string => {
+  const name = typeof m.awayTeamName === "string" ? m.awayTeamName.trim() : "";
+  return name !== "" ? name : m.awayHouse;
+};
+
+/** Crest for one side: preset glyph → custom logo → legacy house crest. */
+function TeamCrest({
+  match,
+  side,
+  size = 72,
+}: {
+  match: MatchDoc;
+  side: "home" | "away";
+  size?: number;
+}) {
+  const raw = side === "home" ? match.homeCrest : match.awayCrest;
+  const preset = crestPreset(normalizeCrest(raw ?? ""));
+  if (preset) {
+    return (
+      <span
+        className={`flex items-center justify-center rounded-xl border ${preset.tone}`}
+        style={{ width: size, height: size, fontSize: size * 0.45 }}
+        title={preset.label}
+      >
+        {preset.glyph}
+      </span>
+    );
+  }
+  if (typeof raw === "string" && raw !== "") {
+    return (
+      <img
+        src={raw}
+        alt=""
+        className="rounded-xl border border-border/70 object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return <HouseCrest house={side === "home" ? match.homeHouse : match.awayHouse} size={size} />;
+}
 
 /** Safe array access helpers — the schema marks all match-center fields optional. */
 const eventsOf = (m: MatchDoc): TimelineEvent[] =>
@@ -259,6 +312,12 @@ function MatchHeader({
           <p className="text-muted-foreground text-xs font-bold uppercase tracking-widest">
             {STAGE_LABELS[match.stage]}
           </p>
+          {typeof match.gameweek === "number" && match.gameweek > 0 && (
+            <Badge className="border border-teal-400/40 bg-teal-400/10 text-teal-300">
+              GW{match.gameweek}
+              {match.friendly === true ? " · Friendly" : ""}
+            </Badge>
+          )}
           <Badge variant={match.status === "completed" ? "secondary" : "destructive"}>
             {statusLabel}
           </Badge>
@@ -269,9 +328,11 @@ function MatchHeader({
           )}
         </div>
         <div className="flex items-center justify-center gap-6 sm:gap-12">
-          <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-4">
-            <HouseCrest house={match.homeHouse} size={72} />
-            <span className="font-display text-2xl font-bold">{match.homeHouse}</span>
+          <div className="flex min-w-0 flex-col items-center gap-2 sm:flex-row sm:gap-4">
+            <TeamCrest match={match} side="home" size={72} />
+            <span className="font-display truncate text-2xl font-bold">
+              {homeLabelOf(match)}
+            </span>
             <WinnerTick match={match} house={match.homeHouse} className="size-7" />
           </div>
           <div className="text-center">
@@ -290,11 +351,11 @@ function MatchHeader({
               <ShootoutSummary match={match} className="max-w-[16rem]" />
             </div>
           </div>
-          <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-4">
-            <span className="font-display order-2 text-2xl font-bold sm:order-1">
-              {match.awayHouse}
+          <div className="flex min-w-0 flex-col items-center gap-2 sm:flex-row sm:gap-4">
+            <span className="font-display order-2 truncate text-2xl font-bold sm:order-1">
+              {awayLabelOf(match)}
             </span>
-            <HouseCrest house={match.awayHouse} size={72} />
+            <TeamCrest match={match} side="away" size={72} />
             <WinnerTick match={match} house={match.awayHouse} className="size-7" />
           </div>
         </div>

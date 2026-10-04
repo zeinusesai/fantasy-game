@@ -13,6 +13,85 @@ import type { Doc, Id } from "./_generated/dataModel";
  * Usage: const signedInUser = await ctx.runQuery(api.users.currentUser);
  * THIS FUNCTION IS READ-ONLY. DO NOT MODIFY.
  */
+/**
+ * Y11 PE Hub — retro 8-bit arcade toggle.
+ *
+ * Stores a single boolean on the manager's profile; the client mirrors it to
+ * a `pixel-mode` class on <html> so player cards, pitch turf and badges switch
+ * to the 1980s pixel treatment. Total: any failure surfaces a readable error
+ * instead of a raw server message.
+ */
+export const setPixelMode = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, { enabled }) => {
+    let user: Doc<"users">;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to change your theme.",
+      );
+    }
+    try {
+      await ctx.db.patch(user._id, { pixelMode: enabled === true });
+      return { pixelMode: enabled === true };
+    } catch {
+      throw new Error("Could not save your theme — please try again.");
+    }
+  },
+});
+
+/**
+ * Y11 PE Hub — equip an entrance audio stinger and/or a stadium pitch skin
+ * from "My Locker". Both values are plain preset ids / bounded URLs and are
+ * re-sanitised server-side, so a tampered client can never store a script.
+ */
+export const setLockerItem = mutation({
+  args: {
+    entranceStinger: v.optional(v.string()),
+    pitchSkin: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    let user: Doc<"users">;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to equip a locker item.",
+      );
+    }
+
+    const clean = (raw: string | undefined) => {
+      if (raw === undefined) return undefined;
+      const value = raw.trim();
+      if (value === "") return ""; // explicitly unequipped
+      if (value.length > 200) {
+        throw new Error("That locker item is too long — pick a preset instead.");
+      }
+      if (!/^[a-z0-9:/._-]+$/i.test(value)) {
+        throw new Error("That locker item isn't valid — pick a preset instead.");
+      }
+      return value;
+    };
+
+    try {
+      const patch: Partial<Doc<"users">> = {};
+      const stinger = clean(args.entranceStinger);
+      const skin = clean(args.pitchSkin);
+      if (stinger !== undefined) patch.entranceStinger = stinger;
+      if (skin !== undefined) patch.pitchSkin = skin;
+      await ctx.db.patch(user._id, patch);
+      return {
+        entranceStinger: stinger !== undefined ? stinger : (user.entranceStinger ?? ""),
+        pitchSkin: skin !== undefined ? skin : (user.pitchSkin ?? ""),
+      };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("locker item")) throw err;
+      throw new Error("Could not equip that item — please try again.");
+    }
+  },
+});
+
 export const currentUser = query({
   args: {},
   handler: async (ctx) => {
@@ -191,6 +270,13 @@ export const getPublicProfile = query({
           favouriteHouse: supportedHouse,
         },
         supportedHouse,
+        // Y11 PE Hub grouping — `user?.section ?? null` fallback, so a profile
+        // without a PE class group degrades to a neutral state rather than
+        // reaching for a house that no longer exists.
+        section:
+          typeof user.section === "string" && user.section.trim() !== ""
+            ? user.section.trim().slice(0, 24)
+            : null,
         favouritePlayer,
       };
     } catch {

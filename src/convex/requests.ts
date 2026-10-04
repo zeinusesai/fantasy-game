@@ -1,14 +1,14 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requireUser, requireAdmin, requireSuperAdmin } from "./lib";
+import { requireUser, requireAdmin, requireSuperAdmin, isSuperAdminIdentity } from "./lib";
 import { formatMoney } from "./configDefaults";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 
 // ── Queries (null-safe: never throw for the subscribing client) ──────────
 
-/** All price change requests, newest first. Admin only. */
+/** All price change requests, newest first. Super Admin (Zein) only. */
 export const listPriceRequests = query({
   args: {},
   handler: async (ctx) => {
@@ -17,10 +17,8 @@ export const listPriceRequests = query({
     const userId = await getAuthUserId(ctx);
     if (userId === null) return [];
     const viewer = await ctx.db.get(userId);
-    if (
-      !viewer ||
-      (viewer.role !== "super_admin" && viewer.role !== "moderator")
-    ) {
+    // Single Super-Admin restriction: role AND Zein identity must both match.
+    if (!viewer || viewer.role !== "super_admin" || !isSuperAdminIdentity(viewer)) {
       return [];
     }
     const requests = await ctx.db.query("priceRequests").collect();
@@ -266,7 +264,7 @@ export const deletePriceRequest = mutation({
 
 // ── Queries (null-safe: never throw for the subscribing client) ──────────
 
-/** All photo removal requests, newest first. Admins only. */
+/** All photo removal requests, newest first. Super Admin (Zein) only. */
 export const listPhotoRequests = query({
   args: {},
   handler: async (ctx) => {
@@ -275,10 +273,8 @@ export const listPhotoRequests = query({
     const userId = await getAuthUserId(ctx);
     if (userId === null) return [];
     const viewer = await ctx.db.get(userId);
-    if (
-      !viewer ||
-      (viewer.role !== "super_admin" && viewer.role !== "moderator")
-    ) {
+    // Single Super-Admin restriction: role AND Zein identity must both match.
+    if (!viewer || viewer.role !== "super_admin" || !isSuperAdminIdentity(viewer)) {
       return [];
     }
     const requests = await ctx.db.query("photoRequests").collect();

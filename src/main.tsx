@@ -7,6 +7,7 @@ import { ConvexReactClient } from "convex/react";
 import { OwnershipWatermark } from "@/components/OwnershipWatermark";
 import { MaintenanceGate } from "@/components/MaintenanceGate";
 import { AppTitleSync } from "@/components/AppTitleSync";
+import { PixelThemeSync } from "@/components/PixelThemeSync";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
@@ -92,7 +93,21 @@ class RootErrorBoundary extends React.Component<
   }
 }
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+/**
+ * Y11 PE Hub — defensive browser hydration guard. The Convex client URL must
+ * come from the browser bundle (`import.meta.env.VITE_CONVEX_URL`). If it is
+ * missing or malformed (static codegen runs, local dev without env wiring),
+ * fall back to the local dev backend instead of letting the `ConvexReactClient`
+ * constructor throw and blank the app. Auth-issuer fallbacks live in
+ * `convex/auth.config.ts` (`VLY_CONVEX_AUTH_ISSUER ?? "https://freebuff.com"`),
+ * so codegen never hard-fails on an unset issuer either.
+ */
+const rawConvexUrl: unknown = import.meta.env.VITE_CONVEX_URL;
+const convexUrl =
+  typeof rawConvexUrl === "string" && /^https?:\/\//.test(rawConvexUrl)
+    ? rawConvexUrl
+    : "http://localhost:3210";
+const convex = new ConvexReactClient(convexUrl);
 
 /** Enable install-to-home-screen (PWA) — network-first SW, zero caching risk. */
 if ("serviceWorker" in navigator) {
@@ -152,6 +167,7 @@ createRoot(document.getElementById("root")!).render(
             <RouteSyncer />
           <AdminSeedTrigger />
           <AppTitleSync />
+          <PixelThemeSync />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Landing />} />
@@ -195,6 +211,10 @@ createRoot(document.getElementById("root")!).render(
                   </RequireAuth>
                 }
               />
+              {/* Super-Admin only. `Admin` enforces the single Super-Admin
+                  restriction (Zein) and redirects every other account to
+                  /dashboard, while AppNav hides the entry point entirely for
+                  non-admins. Backend handlers re-check independently. */}
               <Route
                 path="/admin"
                 element={

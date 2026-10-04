@@ -116,7 +116,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
               <Swords className="size-5" />
             </span>
             <span className="font-display text-2xl font-bold tracking-wide">
-              YEAR 11 <span className="text-primary">INTERHOUSE</span>
+              Y11 <span className="text-primary">PE HUB</span>
             </span>
           </button>
         </div>
@@ -288,7 +288,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       </div>
 
       <footer className="text-muted-foreground py-4 text-center text-xs">
-        Year 11 Interhouse · Tournament & Fantasy League
+        Y11 PE Hub · Year 11 PE · 7-a-side Fantasy League
       </footer>
     </div>
   );

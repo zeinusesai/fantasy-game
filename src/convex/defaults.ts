@@ -37,8 +37,8 @@ import type { House, Position } from "./schema";
 import { HOUSES, POSITIONS } from "./schema";
 
 export const APP_DEFAULTS = {
-  appTitle: "Year 11 Interhouse",
-  appTagline: "Interhouse Tournament & Fantasy League",
+  appTitle: "Y11 PE Hub",
+  appTagline: "Year 11 PE · 7-a-side Fantasy Hub",
   maintenanceTitle: "Under maintenance",
   maintenanceMessage:
     "The website is currently in maintenance, need anything? Contact Zein. It will probably be up in a few minutes!",

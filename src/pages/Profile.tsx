@@ -29,6 +29,28 @@ import { Camera, Crown, Flame, Loader2, Save, Sparkles, Star, Zap } from "lucide
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
+/**
+ * Y11 PE Hub — "My Locker" presets. Pure data: 5-second entrance audio
+ * stingers and stadium pitch skins a manager can equip. An empty id means
+ * "none / classic", which the server stores as `""`.
+ */
+const STINGER_PRESETS = [
+  { id: "", emoji: "🔇", label: "None" },
+  { id: "kickoff-horn", emoji: "📯", label: "Kickoff Horn" },
+  { id: "tunnel-run", emoji: "🏟️", label: "Tunnel Run" },
+  { id: "crowd-roar", emoji: "📣", label: "Crowd Roar" },
+  { id: "arcade-bleep", emoji: "🕹️", label: "Arcade Bleep" },
+  { id: "champions-anthem", emoji: "🏆", label: "Champions Anthem" },
+] as const;
+
+const PITCH_SKIN_PRESETS = [
+  { id: "", emoji: "🌿", label: "Classic turf" },
+  { id: "indoor-court", emoji: "🏀", label: "Indoor court" },
+  { id: "night-floodlights", emoji: "💡", label: "Floodlit night" },
+  { id: "street-concrete", emoji: "🧱", label: "Street concrete" },
+  { id: "8bit-arcade", emoji: "👾", label: "8-bit arcade" },
+] as const;
+
 export default function Profile() {
   const { user, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -37,6 +59,49 @@ export default function Profile() {
   // (server-gated on having earned a title cosmetic).
   const showcase = useQuery(api.rewardsEngine.getShowcase);
   const setCustomTitle = useMutation(api.rewardsEngine.setCustomTitle);
+  // ── Y11 PE Hub — "My Locker": retro theme, entrance stinger, pitch skin ──
+  const setPixelMode = useMutation(api.users.setPixelMode);
+  const setLockerItem = useMutation(api.users.setLockerItem);
+  const pixelMode = user?.pixelMode === true;
+  const [stinger, setStinger] = useState(user?.entranceStinger ?? "");
+  const [pitchSkin, setPitchSkin] = useState(user?.pitchSkin ?? "");
+
+  const togglePixelMode = async () => {
+    try {
+      await setPixelMode({ enabled: !pixelMode });
+      toast.success(
+        !pixelMode
+          ? "8-bit arcade mode ON — cards, turf and badges are now pixel art."
+          : "Back to the modern PE Hub look.",
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save your theme.");
+    }
+  };
+
+  const equipStinger = async (value: string) => {
+    const previous = stinger;
+    setStinger(value);
+    try {
+      await setLockerItem({ entranceStinger: value });
+      toast.success(value === "" ? "Entrance stinger unequipped." : "Entrance stinger equipped.");
+    } catch (err) {
+      setStinger(previous);
+      toast.error(err instanceof Error ? err.message : "Could not equip that stinger.");
+    }
+  };
+
+  const equipPitchSkin = async (value: string) => {
+    const previous = pitchSkin;
+    setPitchSkin(value);
+    try {
+      await setLockerItem({ pitchSkin: value });
+      toast.success(value === "" ? "Pitch skin reset to classic turf." : "Pitch skin equipped.");
+    } catch (err) {
+      setPitchSkin(previous);
+      toast.error(err instanceof Error ? err.message : "Could not equip that pitch skin.");
+    }
+  };
   const [titleDraft, setTitleDraft] = useState("");
   const [titleBusy, setTitleBusy] = useState(false);
   // Defensive: the query can be undefined / partial while loading.
@@ -489,6 +554,77 @@ export default function Profile() {
               </CardContent>
             </Card>
           )}
+
+          {/* ── My Locker — retro theme, entrance stinger, pitch skin ── */}
+          <Card className="border-border/80">
+            <CardHeader>
+              <CardTitle className="font-display text-sm font-bold uppercase tracking-widest">
+                My Locker
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-secondary/40 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Retro 8-bit arcade theme</p>
+                  <p className="text-muted-foreground text-xs">
+                    Pixelates player cards, pitch turf and badges.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant={pixelMode ? "default" : "outline"}
+                  onClick={togglePixelMode}
+                  className="shrink-0"
+                >
+                  {pixelMode ? "ON" : "OFF"}
+                </Button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="locker-stinger" className="text-xs uppercase tracking-widest">
+                    Entrance stinger
+                  </Label>
+                  <Select value={stinger} onValueChange={(v) => void equipStinger(v)}>
+                    <SelectTrigger id="locker-stinger">
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STINGER_PRESETS.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.emoji} {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-[11px]">
+                    5-second blast when your profile opens.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="locker-pitch" className="text-xs uppercase tracking-widest">
+                    Pitch skin
+                  </Label>
+                  <Select value={pitchSkin} onValueChange={(v) => void equipPitchSkin(v)}>
+                    <SelectTrigger id="locker-pitch">
+                      <SelectValue placeholder="Classic turf" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PITCH_SKIN_PRESETS.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.emoji} {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-[11px]">
+                    Stadium look for your squad pitch.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
       )}

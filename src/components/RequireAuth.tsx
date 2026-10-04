@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2, Lock } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 
 /**
@@ -39,7 +39,17 @@ export function RequireAuth({
   const navigate = useNavigate();
   const location = useLocation();
 
-  if (isLoading) {
+  // Outage guard: with the Convex backend unreachable, `isLoading` never
+  // resolves. After a short grace period, fall through to the signed-out
+  // branch instead of spinning forever — the visitor gets a visible
+  // sign-in card (and can retry) rather than a blank site.
+  const [graceOver, setGraceOver] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setGraceOver(true), 4000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (isLoading && !graceOver) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />

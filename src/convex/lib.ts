@@ -101,18 +101,65 @@ export async function requireUser(ctx: QueryCtx | MutationCtx) {
   return user;
 }
 
+// ── Single Super-Admin restriction (Zein) ───────────────────────────────────
+//
+// The platform has EXACTLY one Super Admin: Zein. `role === "super_admin"`
+// alone is no longer sufficient — the identity check below is what actually
+// authorises a privileged call, so a tampered or mis-promoted row can never
+// unlock the Super-Admin surface.
+//
+// The check is deliberately total: a missing / malformed / legacy username or
+// email simply does NOT match, so every failure mode fails CLOSED.
+
+/** Canonical sign-in name of the one and only Super Admin. */
+export const SUPER_ADMIN_USERNAME = "zein";
+
+function normaliseIdentity(raw: unknown): string {
+  return typeof raw === "string" ? raw.trim().toLowerCase() : "";
+}
+
+/**
+ * Is this row the Super Admin (Zein)?
+ *
+ * Matches on the canonical username ("zein", how the seeded account stores
+ * it), the display name, or a "zein@…" email — all case-insensitive. Every
+ * branch is guarded so a corrupt row can never throw.
+ */
+export function isSuperAdminIdentity(user: Doc<"users"> | null | undefined): boolean {
+  if (!user) return false;
+  try {
+    if (normaliseIdentity(user.username) === SUPER_ADMIN_USERNAME) return true;
+    if (normaliseIdentity(user.name) === SUPER_ADMIN_USERNAME) return true;
+    const email = normaliseIdentity(user.email);
+    if (email === SUPER_ADMIN_USERNAME) return true;
+    if (email.startsWith(`${SUPER_ADMIN_USERNAME}@`)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function requireSuperAdmin(ctx: QueryCtx | MutationCtx) {
   const user = await requireUser(ctx);
-  if (user.role !== "super_admin") {
-    throw new Error("Only the Super Admin can perform this action.");
+  if (user.role !== "super_admin" || !isSuperAdminIdentity(user)) {
+    throw new Error("Unauthorized access");
   }
   return user;
 }
 
+/**
+ * Admin surface guard.
+ *
+ * Historically this also admitted `moderator` accounts. With the single
+ * Super-Admin restriction the whole admin surface — players, requests,
+ * points, matches, config — now resolves to exactly one identity (Zein), so
+ * `requireAdmin` and `requireSuperAdmin` converge on the same authorization.
+ * The two functions stay separate so call-sites keep their intent readable.
+ */
 export async function requireAdmin(ctx: QueryCtx | MutationCtx) {
   const user = await requireUser(ctx);
-  if (user.role !== "super_admin" && user.role !== "moderator") {
-    throw new Error("Only admins can perform this action.");
+  if (user.role !== "super_admin" || !isSuperAdminIdentity(user)) {
+    throw new Error("Unauthorized access");
   }
   return user;
 }
@@ -168,9 +215,26 @@ export async function getSquadForUser(ctx: QueryCtx | MutationCtx, userId: Id<"u
     .unique();
 }
 
-export type SquadPointsRow = { squadId: Id<"squads">; userId: Id<"users">; total: number; lastMatch: number | null };
+export type SquadPointsRow = {
+  /** Null for a manager who has not submitted a squad yet (pre-season). */
+  squadId: Id<"squads"> | null;
+  userId: Id<"users">;
+  total: number;
+  lastMatch: number | null;
+};
 
-/** Aggregated fantasy points across every completed match. */
+/**
+ * Aggregated fantasy points for EVERY registered manager.
+ *
+ * Pre-season visibility guarantee: a manager appears the moment their account
+ * exists — with 0 pts if they have no squad and no settled gameweek yet — so
+ * the leaderboard is never empty before GW1 and never drops an account that
+ * was created but has not picked a team. Previously only managers WITH a
+ * squad row were emitted, which is exactly what produced the blank state.
+ *
+ * Ordering: points descending, then account id ascending (creation order) so
+ * a board full of zeroes is still deterministic instead of reshuffling.
+ */
 export async function getLeaderboardRows(ctx: QueryCtx | MutationCtx) {
   const squads = await ctx.db.query("squads").collect();
   const scores = await ctx.db.query("matchScores").collect();
@@ -198,6 +262,30 @@ export async function getLeaderboardRows(ctx: QueryCtx | MutationCtx) {
       lastMatch: agg.lastMatch,
     };
   });
-  rows.sort((a, b) => b.total - a.total);
+
+  // ── Register every account that has no squad yet, at 0 pts. ──
+  // Defensive: if the users table cannot be read we still return the squads
+  // we already have rather than rejecting the whole query.
+  const covered = new Set<string>(rows.map((r) => String(r.userId)));
+  try {
+    const users = await ctx.db.query("users").collect();
+    for (const u of users) {
+      if (covered.has(String(u._id))) continue;
+      const username = typeof u.username === "string" ? u.username.trim() : "";
+      // Bare auth rows (no manager profile) are not managers — skip them.
+      if (username === "") continue;
+      rows.push({ squadId: null, userId: u._id, total: 0, lastMatch: null });
+    }
+  } catch {
+    // users table unavailable → keep the squad-derived rows.
+  }
+
+  rows.sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    // Convex ids sort by creation time, so ties break into signup order.
+    if (a.userId < b.userId) return -1;
+    if (a.userId > b.userId) return 1;
+    return 0;
+  });
   return rows;
 }

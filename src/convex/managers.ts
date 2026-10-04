@@ -318,6 +318,11 @@ export const getLeaderboard = query({
         // Manual house preference for the subtle row indicator. Normalised
         // so a corrupt row can never render a bogus house name.
         supportedHouse: normalizeHouse(user?.supportedHouse),
+        // Y11 PE Hub grouping — safe fallback so a missing/legacy row renders
+        // `null` ("no section") instead of breaking the leaderboard.
+        section: typeof user?.section === "string" && user.section.trim() !== ""
+          ? user.section.trim().slice(0, 24)
+          : null,
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,
       });
