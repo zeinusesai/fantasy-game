@@ -76,11 +76,12 @@ export default function Landing() {
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(20,184,166,0.16),transparent_55%)]"
           aria-hidden
         />
-        <div className="relative mx-auto grid w-full max-w-7xl gap-10 px-4 py-16 lg:grid-cols-2 lg:items-center lg:py-24">
+        <div className="relative mx-auto w-full max-w-7xl px-4 py-16 lg:py-24">
           <motion.div
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
+            className="max-w-3xl"
           >
             <Badge
               variant="outline"
@@ -125,73 +126,6 @@ export default function Landing() {
                 <Timer className="size-4 text-teal-300" /> Live match centers
               </span>
             </div>
-          </motion.div>
-
-          {/* This week's friendly teaser card */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5, delay: 0.15 }}
-            className="relative"
-          >
-            <div
-              className="absolute -inset-4 rounded-3xl bg-teal-400/10 blur-2xl"
-              aria-hidden
-            />
-            <Card className="card-sheen relative border-white/10 bg-white/[0.03] shadow-2xl">
-              <CardContent className="space-y-4 p-6">
-                <div className="flex items-center justify-between">
-                  <span className="font-display text-lg font-bold uppercase tracking-wide text-white">
-                    This week's friendly
-                  </span>
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 border-teal-400/30 bg-teal-400/10 text-teal-300"
-                  >
-                    <Trophy className="size-3" /> Gameweek 1
-                  </Badge>
-                </div>
-                {[
-                  { stage: "Kickoff", home: "Team Alpha", away: "Team Omega" },
-                  { stage: "Undercard", home: "Adam's 7", away: "Zein's 7" },
-                ].map((m, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
-                  >
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-                      {m.stage}
-                    </p>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2 font-semibold text-white">
-                        <span className="flex size-7 items-center justify-center rounded-md border border-teal-400/40 bg-teal-400/10 text-[11px] font-bold text-teal-300">
-                          A
-                        </span>
-                        {m.home}
-                      </span>
-                      <span className="font-score text-sm font-bold text-slate-500">vs</span>
-                      <span className="flex items-center gap-2 font-semibold text-white">
-                        {m.away}
-                        <span className="flex size-7 items-center justify-center rounded-md border border-amber-400/40 bg-amber-400/10 text-[11px] font-bold text-amber-300">
-                          B
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between rounded-xl border border-teal-400/30 bg-teal-400/10 p-3">
-                  <span className="font-display flex items-center gap-2 text-sm font-bold uppercase text-teal-200">
-                    <Trophy className="size-4 text-amber-300" /> Scores lock at full time
-                  </span>
-                  <Link
-                    to="/tournament"
-                    className="text-xs font-semibold text-teal-300 hover:text-teal-200"
-                  >
-                    Follow live →
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
           </motion.div>
         </div>
       </section>
