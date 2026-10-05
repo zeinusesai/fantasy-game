@@ -26,7 +26,7 @@ import {
   Shield,
   Sparkles,
   Sword,
-  Trophy,
+  
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -40,7 +40,7 @@ import { useState } from "react";
 const LINKS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/squad", label: "My Squad", icon: Users },
-  { to: "/tournament", label: "Tournament", icon: Trophy },
+  
   { to: "/leaderboard", label: "Leaderboard", icon: BarChart3 },
   { to: "/hall-of-fame", label: "Hall of Fame", icon: Sparkles },
 ] as const;
@@ -75,7 +75,9 @@ export function AppNav({ children }: { children: ReactNode }) {
     // on scroll, so the page never renders taller than the visible viewport
     // (which was the classic "extra scroll + cut-off footer" iOS bug).
     <div className="stadium-bg min-h-[100dvh] overflow-x-hidden">
-      <header className="sticky top-0 z-40 border-b border-border/80 bg-background/85 backdrop-blur-md">
+      // Liquid Glass header: a translucent slab that samples the stadium gradient
+      // scrolling underneath it, rather than an opaque bar that hides it.
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/60 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] backdrop-blur-xl">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-2 px-4">
           <button
             onClick={() => navigate("/dashboard")}

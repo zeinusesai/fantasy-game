@@ -11,7 +11,8 @@ import {
 } from "./lib";
 
 import { cleanSocialHandle } from "./defaults";
-import { normalizeHouse } from "./defaults";
+import { normalizeHouse, normalizeSection } from "./defaults";
+import { readActiveSectionChampion } from "./leaderboard";
 import { cosmeticById } from "./rewards";
 import { HOUSES, type House } from "./schema";
 
@@ -244,6 +245,11 @@ export const getLeaderboard = query({
     const users = await ctx.db.query("users").collect();
     const byId = new Map(users.map((u) => [u._id, u]));
 
+    // Temporary weekly cosmetic: the PE section that topped the most recently
+    // CLOSED gameweek. Resolved once here so every row carries the flag and
+    // the client never has to join two queries.
+    const sectionChampion = await readActiveSectionChampion(ctx);
+
     // EQUIPPED cosmetics shown next to a manager's name. Collected once so the
     // loop stays a single pass; a missing table degrades to an empty set.
     //
@@ -284,6 +290,10 @@ export const getLeaderboard = query({
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const user = byId.get(row.userId);
+      // Normalised once per row: this single value drives the row's section
+      // chip AND its "Section Champions" glow, so the two can never disagree.
+      const section = normalizeSection(user?.section);
+      const isSectionChampion = section !== null && sectionChampion?.section === section;
       // Favorite player lookup — defensive: unset id, deleted player or any
       // storage hiccup degrades to null (UI renders "N/A").
       let favoritePlayerName: string | null = null;
@@ -318,11 +328,14 @@ export const getLeaderboard = query({
         // Manual house preference for the subtle row indicator. Normalised
         // so a corrupt row can never render a bogus house name.
         supportedHouse: normalizeHouse(user?.supportedHouse),
-        // Y11 PE Hub grouping — safe fallback so a missing/legacy row renders
-        // `null` ("no section") instead of breaking the leaderboard.
-        section: typeof user?.section === "string" && user.section.trim() !== ""
-          ? user.section.trim().slice(0, 24)
-          : null,
+        // Y11 PE Hub grouping — normalised server-side, so a missing/legacy row
+        // renders `null` ("no section") instead of breaking the leaderboard.
+        section,
+        // Temporary weekly "Section Champions" cosmetic. True only for the
+        // managers of the section that topped the last closed gameweek; it
+        // disappears automatically when the next gameweek is closed.
+        isSectionChampion,
+        sectionChampionGameweek: isSectionChampion ? (sectionChampion?.gameweek ?? null) : null,
         totalPoints: row.total,
         lastMatchPoints: row.lastMatch ?? 0,
       });

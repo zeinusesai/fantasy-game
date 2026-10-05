@@ -70,7 +70,7 @@ export function AboutCreditsTrigger({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="text-muted-foreground/70 hover:text-muted-foreground mt-1 inline-flex items-center gap-1 text-[11px] underline-offset-2 transition-colors hover:underline"
+      className="text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1 text-[11px] underline-offset-2 transition-colors hover:underline"
     >
       <Lightbulb className="size-3" />
       About &amp; Credits

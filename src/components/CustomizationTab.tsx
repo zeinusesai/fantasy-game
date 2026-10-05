@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatMoney, parseMoneyInput, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { HOUSES } from "@/lib/fantasy";
 import { useAdminConfig } from "@/hooks/use-admin-config";
+import { readableTextOn } from "@/components/houses";
 import { cn } from "@/lib/utils";
 import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
@@ -178,7 +179,7 @@ export function CustomizationTab() {
   const upsertCustomBadge = useMutation(api.adminConfig.upsertCustomBadge);
   const setBudgetOverride = useMutation(api.adminConfig.setBudgetOverride);
   const setYear12Message = useMutation(api.adminConfig.setYear12Message);
-  const endTournament = useMutation(api.tournament.endTournament);
+  
   const usersResult = useQuery(api.usersAdmin.listUsers);
 
   // Safe fallback: undefined (loading) and null both render as an empty list.
@@ -578,37 +579,6 @@ export function CustomizationTab() {
     }
   };
 
-  // ── End tournament ──
-  const [endOpen, setEndOpen] = useState(false);
-  const [endConfirm, setEndConfirm] = useState("");
-  const [endBusy, setEndBusy] = useState(false);
-
-  const confirmEnd = async () => {
-    setEndBusy(true);
-    try {
-      await endTournament({ ended: true });
-      toast.success("Tournament ended — every manager now sees the Year 12 podium.");
-      setEndOpen(false);
-      setEndConfirm("");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not end the tournament.");
-    } finally {
-      setEndBusy(false);
-    }
-  };
-
-  const reopenTournament = async () => {
-    setEndBusy(true);
-    try {
-      await endTournament({ ended: false });
-      toast.success("Tournament reopened.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reopen the tournament.");
-    } finally {
-      setEndBusy(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* ── Emergency locks ── */}
@@ -652,73 +622,7 @@ export function CustomizationTab() {
           </CardContent>
         </Card>
 
-        <Card
-          className={cn(
-            "border-2",
-            tournamentEnded
-              ? "border-emerald-400/50 bg-emerald-500/5"
-              : "border-red-400/50 bg-red-500/5",
-          )}
-        >
-          <CardHeader>
-            <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
-              <PartyPopper
-                className={cn("size-4", tournamentEnded ? "text-emerald-300" : "text-red-300")}
-              />
-              Tournament lifecycle
-            </CardTitle>
-            <CardDescription>
-              Ending the tournament locks every gameweek and switches every manager's dashboard
-              to the "See you in Year 12!" celebration with the final podium.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge
-                variant="outline"
-                className={cn(
-                  tournamentEnded
-                    ? "border-emerald-400/50 text-emerald-300"
-                    : "border-amber-400/50 text-amber-300",
-                )}
-              >
-                {tournamentEnded ? "🏁 ENDED — Year 12 mode live" : "🟢 IN PROGRESS"}
-              </Badge>
-              {tournamentEnded ? (
-                <Button variant="outline" onClick={reopenTournament} disabled={endBusy}>
-                  {endBusy ? (
-                    <Loader2 className="mr-1.5 size-4 animate-spin" />
-                  ) : (
-                    <AlertTriangle className="mr-1.5 size-4" />
-                  )}
-                  Reopen tournament
-                </Button>
-              ) : (
-                <Button variant="destructive" onClick={() => setEndOpen(true)} disabled={endBusy}>
-                  <PartyPopper className="mr-1.5 size-4" />
-                  End Entire Tournament
-                </Button>
-              )}
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label htmlFor="year12-msg">Year 12 celebration message</Label>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  id="year12-msg"
-                  value={messageInput ?? year12Message}
-                  onChange={(e) => setMessageInput(e.target.value)}
-                  placeholder="See you all in Year 12!"
-                  maxLength={240}
-                />
-                <Button variant="outline" onClick={saveMessage} disabled={busy === "message"}>
-                  <Save className="mr-1.5 size-4" /> Save
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+        </div>
 
       {/* ── House branding ── */}
       <Card className="border-border/80">
@@ -741,8 +645,15 @@ export function CustomizationTab() {
               >
                 <div className="flex items-center gap-2 sm:flex-col">
                   <span
-                    className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg font-bold text-white ring-2 ring-white/20"
-                    style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(v.color) ? v.color : "#64748b" }}
+                    className="flex size-10 shrink-0 items-center justify-center rounded-lg text-lg font-bold ring-2 ring-white/20"
+                    style={{
+                      backgroundColor: /^#[0-9a-fA-F]{6}$/.test(v.color) ? v.color : "#64748b",
+                      // White on the amber Wind default is only 2:1 — pick the
+                      // readable ink for whatever brand colour is configured.
+                      color: readableTextOn(
+                        /^#[0-9a-fA-F]{6}$/.test(v.color) ? v.color : "#64748b",
+                      ),
+                    }}
                     aria-hidden
                   >
                     {v.name.slice(0, 1).toUpperCase()}
@@ -1298,55 +1209,7 @@ export function CustomizationTab() {
         </DialogContent>
       </Dialog>
 
-      {/* ── End tournament confirmation ── */}
-      <Dialog open={endOpen} onOpenChange={(open) => !open && setEndOpen(false)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="size-4" /> End the entire tournament?
-            </DialogTitle>
-            <DialogDescription>
-              This is the final call. Ending the tournament:
-              <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
-                <li>Locks every gameweek — no more transfers or match edits.</li>
-                <li>Freezes the final standings and the Hall of Fame podium.</li>
-                <li>
-                  Switches every manager's dashboard to the{" "}
-                  <strong>"See you in Year 12!"</strong> celebration screen.
-                </li>
-                <li>Assigns the ⚠️ Forfeit badge to the bottom-place manager(s).</li>
-              </ul>
-              <p className="mt-3 font-semibold">
-                Type <span className="text-destructive">END</span> to confirm.
-              </p>
-            </DialogDescription>
-          </DialogHeader>
-          <Input
-            value={endConfirm}
-            onChange={(e) => setEndConfirm(e.target.value)}
-            placeholder="END"
-            autoFocus
-          />
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEndOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={confirmEnd}
-              disabled={endBusy || endConfirm.trim().toUpperCase() !== "END"}
-            >
-              {endBusy ? (
-                <Loader2 className="mr-1.5 size-4 animate-spin" />
-              ) : (
-                <PartyPopper className="mr-1.5 size-4" />
-              )}
-              End tournament
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      </div>
   );
 }
 

@@ -97,7 +97,7 @@ export function ActivityFeedCard() {
                   <Badge variant="outline" className={cn("border-0 px-1.5 text-[9px] font-black tracking-widest", style.chip)}>
                     {FEED_LABELS[ev.type] ?? "UPDATE"}
                   </Badge>
-                  <span className="text-muted-foreground/60 text-[10px]">{timeAgo(ev.ts)}</span>
+                  <span className="text-muted-foreground/85 text-[10px]">{timeAgo(ev.ts)}</span>
                 </div>
                 {/* Baked text: deleted users/players degrade to the stored string. */}
                 <p className="mt-1 text-sm font-medium">{ev.text}</p>
@@ -408,7 +408,10 @@ function AwardRow({
   tone: string;
 }) {
   return (
-    <div className={cn("rounded-xl border p-3", tone)}>
+    // min-w-0: the truncated <p>s below are whitespace-nowrap, so without it
+    // the grid item's automatic minimum size is the full text width and the
+    // row pushes past the card on narrow screens.
+    <div className={cn("min-w-0 rounded-xl border p-3", tone)}>
       <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest">
         {icon} {label}
       </p>

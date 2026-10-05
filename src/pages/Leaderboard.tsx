@@ -30,6 +30,8 @@ import { HouseSupportDot } from "@/components/HouseSupport";
 import { WagerDialog } from "@/components/WagerDialog";
 import { ProfileModal } from "@/components/ProfileModal";
 import { SkeletonList } from "@/components/Skeletons";
+import { SectionLeaderboardPanel } from "@/components/SectionLeaderboard";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { cosmeticById, cosmeticEmoji } from "@/convex/rewards";
@@ -39,6 +41,7 @@ import {
   Crown,
   Eye,
   Flame,
+  GraduationCap,
   Loader2,
   Medal,
   Star,
@@ -55,10 +58,9 @@ export default function Leaderboard() {
   const leaderboardResult = useQuery(api.managers.getLeaderboard);
   // Live awards engine snapshot — rewritten after every match update.
   const awardsResult = useQuery(api.awards.getAwards);
-  // Post-tournament state: podium champion + bottom-place forfeits. Both
-  // render on ACTIVE and FINALIZED leaderboards (the forfeit list only fills
-  // once the Super Admin ends the tournament).
-  const resultsResult = useQuery(api.tournament.getTournamentResults);
+  // The interhouse knockout tournament is gone: there is no podium champion
+  // and no forfeit list any more, so the table falls back purely to the live
+  // ranking from `managers.getLeaderboard`.
 
   const rows = leaderboardResult ?? [];
   const loading = leaderboardResult === undefined;
@@ -98,15 +100,9 @@ export default function Leaderboard() {
 
   // Safe fallbacks: `?? []` / `?? null` everywhere, so an empty or failed
   // query simply omits the badges rather than crashing the table.
-  const forfeitIds = new Set(
-    (resultsResult?.forfeits ?? [])
-      .map((f) => String(f.userId ?? ""))
-      .filter((id) => id.length > 0),
-  );
-  const championId = resultsResult?.champion?.userId
-    ? String(resultsResult.champion.userId)
-    : null;
-  const tournamentEnded = resultsResult?.tournamentEnded === true;
+  const forfeitIds = new Set<string>();
+  const championId: string | null = null;
+  const tournamentEnded = false;
 
   // ── Tournament-progress gate ───────────────────────────────────────────
   // Every trophy badge below is a PERFORMANCE claim: "you won", "you came
@@ -143,7 +139,22 @@ export default function Leaderboard() {
           </p>
         </div>
 
-        <Card className="card-sheen border-border/80">
+        {/* ── Dual-tab leaderboard ──
+            Tab 1: individual managers ranked by total points.
+            Tab 2: Section A–H ranked by the aggregate points of their members,
+                   carrying the temporary "Section Champions" weekly glow. */}
+        <Tabs defaultValue="managers">
+          <TabsList className="glass-subtle w-full sm:w-auto">
+            <TabsTrigger value="managers" className="gap-1.5">
+              <BarChart3 className="size-4" /> Managers
+            </TabsTrigger>
+            <TabsTrigger value="sections" className="gap-1.5">
+              <GraduationCap className="size-4" /> Sections
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="managers" className="mt-4">
+        <Card className="card-sheen border-white/10">
           <CardHeader>
             <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
               <BarChart3 className="text-primary size-4" /> Fantasy rankings
@@ -229,8 +240,22 @@ export default function Leaderboard() {
                             customBadge={row.customBadge}
                           />
                         </span>
-                        <span className="text-muted-foreground block truncate text-xs">
+                        <span className="text-muted-foreground flex items-center gap-1 truncate text-xs">
                           @{row.username}
+                          {/* Section chip + the temporary weekly cosmetic. */}
+                          {row.section && (
+                            <span className="text-muted-foreground/80">
+                              · {row.section}
+                            </span>
+                          )}
+                          {row.isSectionChampion && (
+                            <span
+                              title={`${row.section} topped GW${row.sectionChampionGameweek ?? "?"}`}
+                              className="text-amber-300"
+                            >
+                              🏆
+                            </span>
+                          )}
                         </span>
                       </span>
                       {/* Points */}
@@ -328,6 +353,9 @@ export default function Leaderboard() {
                           // styling and the badge can never disagree.
                           isFirstPlace &&
                             "border-b-amber-400/40 bg-gradient-to-r from-amber-400/15 via-amber-400/5 to-transparent shadow-[0_0_24px_rgba(251,191,36,0.12)]",
+                          // Temporary weekly "Section Champions" highlight.
+                          row.isSectionChampion &&
+                            "bg-amber-400/5 shadow-[inset_3px_0_0_0_rgba(250,204,21,0.55)]",
                           isMe && "bg-primary/5 hover:bg-primary/10",
                         )}
                       >
@@ -423,6 +451,24 @@ export default function Leaderboard() {
                               {isDiffMaster && (
                                 <span title="Differential Master — most points from <15% owned players" className="shrink-0 rounded-full border border-fuchsia-400/50 bg-fuchsia-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-fuchsia-300">🎯 Diff Master</span>
                               )}
+                              {/* PE class section chip. */}
+                              {row.section && (
+                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 text-[9px] font-black uppercase tracking-wide text-primary">
+                                  {row.section}
+                                </span>
+                              )}
+                              {/* Temporary weekly cosmetic — awarded to every
+                                  manager in the top-scoring section when a
+                                  gameweek closes, and replaced at the next
+                                  one. */}
+                              {row.isSectionChampion && (
+                                <span
+                                  title={`Section Champions — ${row.section} topped GW${row.sectionChampionGameweek ?? "?"}`}
+                                  className="section-champion-name inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-400/60 bg-amber-400/15 px-1.5 text-[9px] font-black uppercase tracking-wide text-amber-100"
+                                >
+                                  <Trophy className="size-3" /> Section Champions
+                                </span>
+                              )}
                               {/* 🥇 Plastic Gold Medalist — 1st place. */}
                               {isGoldMedalist && (
                                 <span
@@ -504,6 +550,12 @@ export default function Leaderboard() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+
+          <TabsContent value="sections" className="mt-4">
+            <SectionLeaderboardPanel />
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Rival Squad Inspector — mounted only while a row is open so the
@@ -616,7 +668,7 @@ function RivalInspector({
               <p className="text-muted-foreground text-sm font-medium">
                 No squad picked yet
               </p>
-              <p className="text-muted-foreground/70 text-xs">
+              <p className="text-muted-foreground text-xs">
                 This manager hasn't drafted their seven — nothing to inspect.
               </p>
             </div>
@@ -653,7 +705,7 @@ function RivalInspector({
                     {formatMoney(rival.remainingBudget)} left
                   </span>
                 </div>
-                <p className="text-muted-foreground/70 mt-0.5 text-[11px]">
+                <p className="text-muted-foreground mt-0.5 text-[11px]">
                   of {formatMoney(rival.effectiveBudget)} available
                 </p>
               </div>

@@ -207,7 +207,7 @@ export default function MatchDetail() {
       <AppNav>
         <MissingPanel
           text="Invalid match link."
-          onBack={() => navigate("/tournament")}
+          onBack={() => navigate("/dashboard")}
         />
       </AppNav>
     );
@@ -224,7 +224,7 @@ export default function MatchDetail() {
       <AppNav>
         <MissingPanel
           text="Match not found — it may have been deleted."
-          onBack={() => navigate("/tournament")}
+          onBack={() => navigate("/dashboard")}
         />
       </AppNav>
     );
@@ -240,10 +240,10 @@ export default function MatchDetail() {
     <AppNav>
       <div className="space-y-6">
         <button
-          onClick={() => navigate("/tournament")}
+          onClick={() => navigate("/dashboard")}
           className="text-muted-foreground flex items-center gap-1.5 text-sm hover:text-foreground"
         >
-          <ArrowLeft className="size-4" /> Back to tournament
+          <ArrowLeft className="size-4" /> Back to dashboard
         </button>
 
         <MatchHeader match={match} potmName={potm?.name ?? null} />

@@ -7,6 +7,7 @@ import {
   type PlatformUser,
 } from "./lib";
 import { normalizeSettings } from "./adminConfig";
+import { TRANSITION_CONFIRM_PHRASE } from "./configDefaults";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 
@@ -32,8 +33,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 // budget rules) are likewise never deleted, so every unlocked visual asset —
 // Zein's included — survives the transition.
 
-/** Exact phrase the Super Admin must type to arm the wipe. */
-export const TRANSITION_CONFIRM_PHRASE = "TRANSITION TO Y11 PE HUB";
+/** Exact phrase the Super Admin must type to arm the wipe.
+ *  Re-exported from `configDefaults` so the shared client-safe constant keeps a
+ *  single definition. */
 
 /** Canonical brand applied to the config row when the season flips over. */
 const PE_HUB_TITLE = "Y11 PE Hub";

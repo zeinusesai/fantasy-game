@@ -2,7 +2,10 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { PitchView } from "@/components/PitchView";
 import { PlayerAvatar } from "@/components/PlayerAvatar";
-import { StatusBadge } from "@/components/StatusBadge";
+import {
+  AvailabilityBadge,
+  isAvailabilityWarning,
+} from "@/components/AvailabilityBadge";
 import { HouseBadge, HouseCrest, PositionChip, useHouseName } from "@/components/houses";
 import { useAdminConfig } from "@/hooks/use-admin-config";
 import { Badge } from "@/components/ui/badge";
@@ -71,7 +74,6 @@ type PlayerRow = {
 /** One row of the Y11 PE Hub skill-stats query (convex/matches.ts). */
 type SkillStat = {
   playerId: Id<"players">;
-  tier: number;
   avg: number;
   total: number;
   apps: number;
@@ -82,26 +84,8 @@ type SkillStat = {
   recent: number[];
 };
 
-const TIER_TONE: Record<number, string> = {
-  1: "border-white/15 bg-white/5 text-slate-300",
-  2: "border-sky-400/40 bg-sky-400/10 text-sky-300",
-  3: "border-teal-400/40 bg-teal-400/10 text-teal-300",
-  4: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
-  5: "border-gold/50 bg-gold/10 text-gold",
-};
-
-/** Numeric Skill Level Badge — Tier 1 … Tier 5 (replaces star ratings). */
-export function SkillTierBadge({ tier }: { tier: number }) {
-  const t = Math.min(5, Math.max(1, Math.round(Number(tier) || 1)));
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-black tracking-wider ${TIER_TONE[t]}`}
-      title={`Skill tier ${t} of 5`}
-    >
-      T{t}
-    </span>
-  );
-}
+// Y11 PE Hub: the 1–5 skill tier / star rating system has been removed —
+// availability (available / injured / doubtful) replaces it on player cards.
 
 /** Recent 3-gameweek form trend. Renders nothing while steady. */
 export function FormBadge({ form }: { form: SkillStat["form"] }) {
@@ -128,16 +112,15 @@ export function FormBadge({ form }: { form: SkillStat["form"] }) {
   return null;
 }
 
-/** Compact stats line: tier · Avg Pts/GW · G A CS · form. */
+/** Compact stats line: Avg Pts/GW · G A CS · form. */
 function SkillStatLine({ stat }: { stat: SkillStat | null }) {
   if (!stat) return null;
   return (
     <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-      <SkillTierBadge tier={stat.tier} />
       <span className="font-score text-muted-foreground">
         Avg: {stat.avg.toFixed(1)} Pts/GW
       </span>
-      <span className="text-muted-foreground/80">
+      <span className="text-muted-foreground">
         · {stat.goals}G {stat.assists}A {stat.cleanSheets}CS
       </span>
       <FormBadge form={stat.form} />
@@ -185,8 +168,8 @@ export default function SquadBuilder() {
   // Popularity badge data — null-safe: no squads yet → no badge rendered.
   const mostPicked = mostPickedResult ?? null;
 
-  // ── Y11 PE Hub: numeric skill tiers + form ──────────────────────────
-  // Tier 1–5, average points per gameweek, goals/assists/clean sheets and a
+  // ── Y11 PE Hub: form + real numbers ─────────────────────────────────
+  // Average points per gameweek, goals/assists/clean sheets and a
   // 🔥 Hot / ❄️ Cold trend over the last three fixtures. Total: an empty
   // array while loading (or on a storage hiccup) simply renders no badges.
   const skillResult = useQuery(api.matches.getPlayerSkillStats);
@@ -660,6 +643,34 @@ export default function SquadBuilder() {
                   still saved and viewable.
                 </p>
               )}
+              {/* Live house counter: max N per house in the starting seven.
+                  Turns amber at the cap and shows MAX, so the constraint is
+                  visible before a manager clicks anything. */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-widest">
+                  House count
+                </span>
+                {HOUSES.map((h) => {
+                  const count = houseCounts[h] ?? 0;
+                  const atMax = count >= houseLimit;
+                  return (
+                    <span
+                      key={h}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
+                        atMax
+                          ? "border-amber-400/60 bg-amber-400/10 text-amber-300"
+                          : "border-border/70 bg-secondary/40 text-foreground"
+                      }`}
+                    >
+                      {h}
+                      <span className="font-score">
+                        {count}/{houseLimit}
+                      </span>
+                      {atMax && <span className="text-[10px] tracking-wider">MAX</span>}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {/* Double Down chip: EXACTLY ONE per manager for the whole tournament.
@@ -994,15 +1005,29 @@ export default function SquadBuilder() {
                               toast.error("Not enough budget left for this player.");
                               return;
                             }
+                            // Injured / doubtful players can still be picked, but
+                            // the manager is warned before committing.
+                            if (!isSelected && isAvailabilityWarning(p.status)) {
+                              toast.warning(
+                                `${p.name} is ${p.status === "injured" ? "injured \ud83d\ude91" : "doubtful \u26a0\ufe0f"} — expect them to miss the next gameweek.`,
+                              );
+                            }
                             toggle(p._id);
                           }}
-                          disabled={!affordable && !isSelected}
+                          disabled={(wouldBreakHouse || !affordable) && !isSelected}
+                          title={
+                            wouldBreakHouse && !isSelected
+                              ? `House limit reached: max ${houseLimit} from ${p.house}`
+                              : undefined
+                          }
                           className={`flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border p-3 text-left transition-all ${
                             isSelected
                               ? "border-primary bg-primary/10"
-                              : affordable
-                                ? "border-border/70 bg-secondary/40 hover:border-primary/40"
-                                : "border-border/40 bg-secondary/20 opacity-50"
+                              : wouldBreakHouse
+                                ? "border-amber-400/30 bg-secondary/20 opacity-45"
+                                : affordable
+                                  ? "border-border/70 bg-secondary/40 hover:border-primary/40"
+                                  : "border-border/40 bg-secondary/20 opacity-50"
                           } ${
                             // Player of the Week: distinct golden frame.
                             potwId !== null && String(p._id) === String(potwId)
@@ -1021,24 +1046,34 @@ export default function SquadBuilder() {
                                 {houseName(p.house)} <PositionChip position={p.position} />
                                 {/* Availability set by the Super Admin; defaults to
                                     "Expected to Start" when unassigned. */}
-                                <StatusBadge status={p.statusLabel} short />
+                                <AvailabilityBadge status={p.status} />
                               </p>
                               <SkillStatLine stat={skill} />
                               {/* Ownership: exact pick count + % — safe at 0 squads.
-                                  The count is a button: opens the pick-inspection
-                                  dialog listing every manager who owns the player. */}
-                              <button
-                                type="button"
+                                  Rendered as a `span role="button"` rather than a real
+                                  <button>: the whole player card is already a button
+                                  and nested buttons are invalid HTML, which the
+                                  browser reparents (breaking the card's layout). */}
+                              <span
+                                role="button"
+                                tabIndex={0}
                                 onClick={(e) => {
                                   e.stopPropagation(); // don't toggle the player
                                   setPickedByFor(p);
                                 }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setPickedByFor(p);
+                                  }
+                                }}
                                 title="View managers who picked this player"
-                                className="mt-1 inline-flex items-center gap-1 rounded text-[11px] font-medium text-sky-300 underline-offset-2 transition-colors hover:text-sky-200 hover:underline"
+                                className="mt-1 inline-flex cursor-pointer items-center gap-1 rounded text-[11px] font-medium text-sky-300 underline-offset-2 transition-colors hover:text-sky-200 hover:underline focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:outline-none"
                               >
                                 Picked by {ownership.count} manager{ownership.count === 1 ? "" : "s"} ({ownership.pct}%)
                                 <Eye className="size-3" />
-                              </button>
+                              </span>
                               {pendingReq && (
                                 <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200">
                                   <Coins className="size-3" /> price review pending
@@ -1283,7 +1318,7 @@ export default function SquadBuilder() {
               )}
             </DialogDescription>
           </DialogHeader>
-          {/* Y11 PE Hub skill read-out — numeric tier + the raw numbers. */}
+          {/* Y11 PE Hub read-out — availability + the raw numbers. */}
           {detailFor &&
             (() => {
               const stat = skillById.get(String(detailFor._id)) ?? null;
@@ -1292,9 +1327,8 @@ export default function SquadBuilder() {
                 <div className="rounded-xl border border-border/70 bg-secondary/40 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-widest">
-                      Skill &amp; form
+                      Form &amp; stats
                     </span>
-                    <SkillTierBadge tier={stat.tier} />
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-center">
                     {[

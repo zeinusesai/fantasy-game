@@ -121,6 +121,16 @@ export function toSafeAmount(value: unknown): number {
   return n;
 }
 
+/**
+ * Exact phrase the Super Admin must type to arm the season wipe.
+ *
+ * It lives here, in this dependency-free module, because the admin UI needs
+ * the same string: importing it from `convex/admin.ts` would pull
+ * `./_generated/server` (whose `env = process.env` line) into the browser
+ * bundle and crash the whole /admin route with "process is not defined".
+ */
+export const TRANSITION_CONFIRM_PHRASE = "TRANSITION TO Y11 PE HUB";
+
 // House color tokens used across UI + seed logo SVGs.
 export const HOUSE_META = {
   Fire: { color: "#e64530" },

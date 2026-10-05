@@ -65,9 +65,9 @@
   --radius: 0.75rem;
   --background: #0b0f17;
   --foreground: #e2e8f0;
-  --card: rgba(255, 255, 255, 0.03);
+  --card: rgba(2, 6, 23, 0.55);
   --card-foreground: #e8edf4;
-  --popover: rgba(255, 255, 255, 0.04);
+  --popover: rgba(2, 6, 23, 0.82);
   --popover-foreground: #e8edf4;
   --primary: #14b8a6;
   --primary-foreground: #04211e;
@@ -105,9 +105,9 @@
 .dark {
   --background: #0b0f17;
   --foreground: #e2e8f0;
-  --card: rgba(255, 255, 255, 0.03);
+  --card: rgba(2, 6, 23, 0.55);
   --card-foreground: #e8edf4;
-  --popover: rgba(255, 255, 255, 0.04);
+  --popover: rgba(2, 6, 23, 0.82);
   --popover-foreground: #e8edf4;
   --primary: #14b8a6;
   --primary-foreground: #04211e;
@@ -157,10 +157,76 @@
       radial-gradient(700px 380px at 50% 110%, rgb(16 185 129 / 0.08), transparent 60%),
       var(--background);
   }
-  /* Glassmorphism container — rgba(255,255,255,0.03) over the slate canvas. */
+  /* ── Liquid Glass ──────────────────────────────────────────────────────
+     A translucent, blurred slab that samples the stadium gradient behind it.
+     `--glass-tint` / `--glass-border` are the two tokens every glass surface
+     reads, so the whole app can be re-tinted from one place. */
   .glass {
-    background-color: rgb(255 255 255 / 0.03);
+    background-color: rgb(2 6 23 / 0.55);
     border: 1px solid rgb(255 255 255 / 0.1);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
+    box-shadow:
+      0 8px 32px 0 rgb(0 0 0 / 0.37),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.08);
+  }
+  /* Heavier variant for modals / sheets, where the backdrop needs to be
+     pushed further back so the foreground text stays legible. */
+  .glass-strong {
+    background-color: rgb(2 6 23 / 0.72);
+    border: 1px solid rgb(255 255 255 / 0.12);
+    -webkit-backdrop-filter: blur(32px) saturate(160%);
+    backdrop-filter: blur(32px) saturate(160%);
+    box-shadow:
+      0 8px 32px 0 rgb(0 0 0 / 0.45),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.1);
+  }
+  /* Lighter variant for chips / inline pills that sit ON a glass panel and
+     must not stack a second full-strength blur on top of it. */
+  .glass-subtle {
+    background-color: rgb(255 255 255 / 0.05);
+    border: 1px solid rgb(255 255 255 / 0.1);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+    backdrop-filter: blur(12px) saturate(140%);
+  }
+  /* Interactive glass: the surface brightens on hover/focus and the whole
+     transition is eased so the highlight reads as a glint rather than a jump. */
+  .glass-interactive {
+    transition:
+      background-color 300ms ease,
+      border-color 300ms ease,
+      box-shadow 300ms ease,
+      transform 300ms ease;
+  }
+  .glass-interactive:hover {
+    background-color: rgb(255 255 255 / 0.1);
+    border-color: rgb(255 255 255 / 0.2);
+    box-shadow:
+      0 12px 40px 0 rgb(0 0 0 / 0.42),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.16);
+  }
+  /* A single diagonal specular streak across the top of a card. Purely
+     decorative (`aria-hidden` in markup terms) and pointer-transparent. */
+  .glass-glint {
+    position: relative;
+    overflow: hidden;
+  }
+  .glass-glint::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      transparent 0%,
+      rgb(255 255 255 / 0.14) 38%,
+      transparent 62%
+    );
+    opacity: 0.55;
+    transition: opacity 300ms ease;
+  }
+  .glass-glint:hover::before {
+    opacity: 1;
   }
   .pitch-bg {
     background:
@@ -195,6 +261,24 @@
         rgb(0 0 0 / 0) 60%
       ),
       linear-gradient(180deg, oklch(0.22 0.02 85), oklch(0.14 0.02 85));
+  }
+
+  /* ── "Section Champions" weekly cosmetic ──────────────────────────────
+     The temporary glow awarded to the top-scoring PE section's card and to
+     every manager in that section while the following gameweek runs. It is a
+     gradient ring plus a soft halo, so it layers on top of any glass surface
+     without needing to know that surface's own colours. */
+  .section-champion-glow {
+    border-color: rgb(250 204 21 / 0.55) !important;
+    box-shadow:
+      0 0 0 1px rgb(250 204 21 / 0.35),
+      0 0 28px 0 rgb(250 204 21 / 0.28),
+      inset 0 1px 0 0 rgb(255 255 255 / 0.14);
+  }
+  .section-champion-name {
+    text-shadow:
+      0 0 10px rgb(250 204 21 / 0.75),
+      0 0 22px rgb(250 204 21 / 0.45);
   }
 
   /* Metallic gold pitch linework (touchline, halfway line, centre circle). */

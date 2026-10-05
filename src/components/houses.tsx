@@ -32,6 +32,72 @@ export function useHouseMotto(): (house: House | string | null | undefined) => s
   return (house) => houseBrand(house).motto;
 }
 
+/** WCAG relative luminance of a hex colour (unknown input → 1 = "already light"). */
+function hexLuminance(hex: string): number {
+  const body = hex.trim().replace(/^#/, "");
+  const full =
+    body.length === 3
+      ? body
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : body;
+  if (!/^[0-9a-f]{6}$/i.test(full)) return 1;
+  const lin = (v: number) => {
+    const n = v / 255;
+    return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  };
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/**
+ * Keep a brand colour usable as *text*.
+ *
+ * The Super Admin can set any hex per house, and deep brand colours (the
+ * default Water blue / Fire red) measure 4.38:1 on the dark glass chip — just
+ * under the 4.5:1 WCAG AA floor for 12px text. This mixes the colour toward
+ * white (hue preserved) only until it clears the floor, so rebrands stay
+ * recognisable while the label stays readable.
+ */
+function readableTextColor(hex: string, minLuminance = 0.26): string {
+  if (hexLuminance(hex) >= minLuminance) return hex;
+  const body = hex.trim().replace(/^#/, "");
+  const full =
+    body.length === 3
+      ? body
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : body;
+  if (!/^[0-9a-f]{6}$/i.test(full)) return hex;
+  const rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  for (let t = 0.05; t <= 1; t += 0.05) {
+    const candidate =
+      "#" +
+      rgb
+        .map((v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, "0"))
+        .join("");
+    if (hexLuminance(candidate) >= minLuminance) return candidate;
+  }
+  return "#ffffff";
+}
+
+/**
+ * Foreground colour (near-black or white) that reads best on `background`.
+ *
+ * Brand swatches sit on Super-Admin-editable hex values, and a fixed
+ * `text-white` falls to 2:1 on the amber Wind default. This picks whichever of
+ * the app's base dark / white scores the higher contrast ratio.
+ */
+export function readableTextOn(background: string): string {
+  const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const lb = hexLuminance(background);
+  const ink = contrast(lb, hexLuminance("#0b1220"));
+  const white = contrast(lb, hexLuminance("#ffffff"));
+  return ink >= white ? "#0b1220" : "#ffffff";
+}
+
 /** Resolve the house color (custom logos override the default palette). */
 export function useHouseLogos(): Record<House, string | null> {
   const logos = useQuery(api.houses.listHouseLogos) ?? null;
@@ -157,8 +223,9 @@ export function HouseBadge({ house, className }: { house: House; className?: str
         className,
       )}
       // The configured brand colour wins over the built-in palette class so a
-      // rebrand takes effect everywhere a house badge appears.
-      style={{ color: color(house) }}
+      // rebrand takes effect everywhere a house badge appears — but it is
+      // lightened first when it would be unreadable as text on the dark chip.
+      style={{ color: readableTextColor(color(house)) }}
       title={houseName(house)}
     >
       <HouseDot house={house} />

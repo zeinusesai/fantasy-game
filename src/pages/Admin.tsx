@@ -43,6 +43,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { formatMoney, parseMoneyInput } from "@/convex/configDefaults";
 import { StatusBadge, STATUS_OPTIONS } from "@/components/StatusBadge";
+import { AvailabilityBadge } from "@/components/AvailabilityBadge";
 import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
 import { PODIUM_SIZE } from "@/convex/rewards";
 import {
@@ -53,6 +54,7 @@ import {
 import type { PlayerStatusLabel } from "@/convex/schema";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges, BADGE_META, ASSIGNABLE_BADGE_KEYS } from "@/components/UserBadge";
+import { SectionPicker, FavoritePlayerPicker } from "@/components/OnboardingFields";
 import { HOUSES, POSITION_LABELS, STAGE_LABELS, STAGE_ORDER } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -485,6 +487,28 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
   const setPlayerImage = useMutation(api.players.setPlayerImage);
   const removePlayerPhoto = useMutation(api.players.removePlayerPhoto);
   const setPlayerStatus = useMutation(api.players.setPlayerStatus);
+  // Y11 PE Hub — simple availability / injury state (replaces starter/sub).
+  const setPlayerAvailability = useMutation(api.players.setPlayerAvailability);
+  const [availabilityBusy, setAvailabilityBusy] = useState<string | null>(null);
+
+  const handleSetAvailability = async (
+    player: { _id: string; name: string },
+    status: "available" | "injured" | "doubtful",
+  ) => {
+    setAvailabilityBusy(player._id);
+    try {
+      await setPlayerAvailability({ playerId: player._id as never, status });
+      toast.success(
+        status === "available"
+          ? `${player.name} is available.`
+          : `${player.name} marked ${status}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update availability.");
+    } finally {
+      setAvailabilityBusy(null);
+    }
+  };
   const bulkSetPlayerStatus = useMutation(api.players.bulkSetPlayerStatus);
 
   const [name, setName] = useState("");
@@ -685,8 +709,11 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
   };
 
   return (
+    // min-w-0 on both grid items: a grid item's automatic minimum size is its
+    // min-content width, which the players table would otherwise push to ~760px
+    // and overflow the phone viewport (the table scrolls inside its own box).
     <div className="grid gap-6 lg:grid-cols-3">
-      <Card className="card-sheen border-border/80 lg:col-span-1">
+      <Card className="card-sheen min-w-0 border-border/80 lg:col-span-1">
         <CardHeader>
           <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
             <Plus className="text-primary size-4" /> Add player
@@ -751,7 +778,7 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/80 lg:col-span-2">
+      <Card className="min-w-0 border-border/80 lg:col-span-2">
         <CardHeader>
           <CardTitle className="font-display text-lg font-bold uppercase tracking-wide">
             Player database
@@ -915,25 +942,27 @@ function PlayersTab({ isSuper }: { isSuper: boolean }) {
                         {isSuper && (
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <StatusBadge status={p.statusLabel} short />
+                              <AvailabilityBadge status={p.status} />
                               <Select
-                                value={p.statusLabel ?? NONE}
-                                onValueChange={(v) => handleSetStatus(p, v)}
-                                disabled={statusBusy === p._id}
+                                value={p.status ?? "available"}
+                                onValueChange={(v) =>
+                                  handleSetAvailability(
+                                    p,
+                                    v as "available" | "injured" | "doubtful",
+                                  )
+                                }
+                                disabled={availabilityBusy === p._id}
                               >
                                 <SelectTrigger
-                                  className="h-7 w-32 text-[11px]"
-                                  aria-label={`Set status for ${p.name}`}
+                                  className="h-7 w-28 text-[11px]"
+                                  aria-label={`Set availability for ${p.name}`}
                                 >
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value={NONE}>Default</SelectItem>
-                                  {STATUS_OPTIONS.map((s) => (
-                                    <SelectItem key={s} value={s}>
-                                      {s}
-                                    </SelectItem>
-                                  ))}
+                                  <SelectItem value="available">🟢 Available</SelectItem>
+                                  <SelectItem value="injured">🔴 Injured</SelectItem>
+                                  <SelectItem value="doubtful">🟡 Doubtful</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
@@ -2285,7 +2314,7 @@ function SettingsTab({ onOpenMaintenance }: { onOpenMaintenance: () => void }) {
       </Card>
 
       {/* System controls — maintenance mode lives in its own tab */}
-      <Card className="border-border/80 lg:col-span-2">
+      <Card className="min-w-0 border-border/80 lg:col-span-2">
         <CardHeader>
           <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
             <Wrench className="text-primary size-4" /> System controls
@@ -3035,6 +3064,9 @@ function RolesTab() {
   const usersResult = useQuery(api.usersAdmin.listAllUsersWithRoles);
   const updateUserRole = useMutation(api.usersAdmin.updateUserRole);
   const assignUserBadge = useMutation(api.usersAdmin.assignUserBadge);
+  // ── Mandatory onboarding, correctable by the Super Admin ──
+  const setUserSection = useMutation(api.usersAdmin.setUserSection);
+  const setUserFavoritePlayer = useMutation(api.usersAdmin.setUserFavoritePlayer);
   // Live badge registry (built-ins + any custom badge the Super Admin
   // created in the Customize tab) so new badges appear here immediately.
   // Safe fallback: an empty/undefined query renders just the built-ins.
@@ -3047,6 +3079,9 @@ function RolesTab() {
     image: string | null;
     role: string;
     customBadge: string | null;
+    section: string | null;
+    favoritePlayerId: string | null;
+    favoritePlayerName: string | null;
   }>;
   const loading = usersResult === undefined;
   const [busyId, setBusyId] = useState<Id<"users"> | null>(null);
@@ -3081,16 +3116,46 @@ function RolesTab() {
     }
   };
 
+  const changeSection = async (targetUserId: Id<"users">, username: string | null, section: string) => {
+    setBusyId(targetUserId);
+    try {
+      await setUserSection({ targetUserId, section });
+      toast.success(
+        section === ""
+          ? `Cleared @${username ?? "user"}'s section.`
+          : `@${username ?? "user"} is now in ${section}.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the section.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const changeFavoritePlayer = async (targetUserId: Id<"users">, username: string | null, playerId: string) => {
+    setBusyId(targetUserId);
+    try {
+      await setUserFavoritePlayer({ targetUserId, playerId });
+      toast.success(`Favourite player updated for @${username ?? "user"}.`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not update the favourite player.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
-    <Card className="border-border/80">
+    <Card className="glass-glint border-white/10">
       <CardHeader>
         <CardTitle className="font-display flex items-center gap-2 text-lg font-bold uppercase tracking-wide">
           <UserCog className="text-primary size-4" /> User roles & permissions
         </CardTitle>
         <CardDescription>
           Assign platform roles: super_admin (full control), admin (moderator
-          scope) or user (standard manager). You cannot demote the last Super
-          Admin.
+          scope) or user (standard manager), and correct any manager&apos;s PE
+          section or favourite player. You cannot demote the last Super Admin.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -3112,6 +3177,8 @@ function RolesTab() {
               <TableRow>
                 <TableHead>Manager</TableHead>
                 <TableHead>Team</TableHead>
+                <TableHead>Section</TableHead>
+                <TableHead>Fav. player</TableHead>
                 <TableHead>Current role</TableHead>
                 <TableHead className="text-right">Change role</TableHead>
               </TableRow>
@@ -3132,6 +3199,23 @@ function RolesTab() {
                     </span>
                   </TableCell>
                   <TableCell>{u.teamName ?? "—"}</TableCell>
+                  {/* PE class section — set at signup, correctable here. */}
+                  <TableCell>
+                    <SectionPicker
+                      value={u.section}
+                      onChange={(next) => changeSection(u._id, u.username, next)}
+                      disabled={busyId === u._id}
+                      placeholder="No section"
+                    />
+                  </TableCell>
+                  {/* Favourite player — searchable, straight from the roster. */}
+                  <TableCell>
+                    <FavoritePlayerPicker
+                      value={u.favoritePlayerId}
+                      onChange={(next) => changeFavoritePlayer(u._id, u.username, next)}
+                      disabled={busyId === u._id}
+                    />
+                  </TableCell>
                   <TableCell>
                     {u.role === "super_admin" ? (
                       <Badge className="bg-primary text-primary-foreground gap-1">

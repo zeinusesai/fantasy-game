@@ -36,7 +36,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/60 backdrop-blur-sm",
         className
       )}
       {...props}
@@ -65,7 +65,7 @@ function DialogContent({
           // `inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto` keeps long
           // content scrollable instead of clipped, and `rounded-t-2xl` gives
           // the sheet its silhouette.
-          "bg-background animate-sheet-up fixed inset-x-0 bottom-0 z-50 grid max-h-[85dvh] w-full gap-4 overflow-y-auto overscroll-contain rounded-t-2xl border-t p-5 pb-nav-safe shadow-lg outline-none",
+          "bg-popover/95 animate-sheet-up fixed inset-x-0 bottom-0 z-50 grid max-h-[85dvh] w-full gap-4 overflow-y-auto overscroll-contain rounded-t-2xl border-t border-white/10 p-5 pb-nav-safe shadow-[0_8px_32px_0_rgba(0,0,0,0.45)] backdrop-blur-2xl outline-none",
           "sm:animate-in sm:top-[50%] sm:bottom-auto sm:left-[50%] sm:max-h-[90dvh] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:border sm:p-6 sm:pb-6 sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:duration-200",
           className
         )}

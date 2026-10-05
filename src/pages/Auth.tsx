@@ -9,11 +9,12 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SectionPicker, FavoritePlayerPicker } from "@/components/OnboardingFields";
 import { useAuth } from "@/hooks/use-auth";
 import { api } from "@/convex/_generated/api";
 import { AVATAR_PRESETS, avatarPresetUrl } from "@/lib/fantasy";
 import { cn } from "@/lib/utils";
-import { Eye, EyeOff, Loader2, LogIn, Swords, UserPlus } from "lucide-react";
+import { Eye, EyeOff, GraduationCap, Loader2, LogIn, Swords, UserPlus } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
@@ -44,6 +45,12 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [showPassword, setShowPassword] = useState(false);
   const [teamName, setTeamName] = useState("");
   const [avatar, setAvatar] = useState<string>(AVATAR_PRESETS[0].id);
+  // ── Mandatory onboarding fields ──
+  // Section (A–H) and a favourite player are REQUIRED to register. They are
+  // sent through the signup call and re-validated server-side in convex/auth.ts,
+  // so the submit button is simply a fast local guard, not the only check.
+  const [section, setSection] = useState<string>("");
+  const [favoritePlayerId, setFavoritePlayerId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,6 +107,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
         if (taken) throw new Error("That username is already taken.");
         if (password.length < 4) throw new Error("Password must be at least 4 characters.");
         if (teamName.trim().length < 2) throw new Error("Team name must be at least 2 characters.");
+        if (section === "") throw new Error("Choose your PE class section to register.");
+        if (favoritePlayerId === "") throw new Error("Choose your favourite player to register.");
         await withAuthTimeout(
           signIn("password", {
             flow: "signUp",
@@ -107,6 +116,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             password,
             teamName: teamName.trim(),
             avatar,
+            section,
+            favoritePlayerId,
           }),
         );
       } else {
@@ -147,7 +158,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
 
   return (
     <div className="stadium-bg flex min-h-screen flex-col">
-      <header className="border-b border-border/60">
+      <header className="border-b border-white/10 bg-slate-950/60 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center px-4">
           <button onClick={() => navigate("/")} className="flex items-center gap-2">
             <span className="from-primary to-primary/60 flex size-9 items-center justify-center rounded-lg bg-gradient-to-br text-primary-foreground shadow-md">
@@ -161,14 +172,14 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       </header>
 
       <div className="flex flex-1 items-center justify-center px-4 py-10">
-        <Card className="card-sheen w-full max-w-md border-border/80 shadow-2xl">
+        <Card className="glass-glint w-full max-w-md border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.45)]">
           <CardHeader className="text-center">
             <CardTitle className="font-display text-2xl font-bold">
               {mode === "signup" ? "Register your team" : "Welcome back, manager"}
             </CardTitle>
             <CardDescription>
               {mode === "signup"
-                ? "Claim your username, name your team, pick a crest."
+                ? "Claim your username, name your team, pick your section and favourite player."
                 : "Sign in with your username and password."}
             </CardDescription>
           </CardHeader>
@@ -285,6 +296,43 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       upload a custom photo from your profile page later.
                     </p>
                   </div>
+
+                  {/* ── Mandatory onboarding ──
+                      Both fields are required to register; the submit button
+                      stays disabled until each one is chosen. */}
+                  <div className="border-primary/25 bg-primary/5 grid gap-2 rounded-xl border p-3">
+                    <p className="text-primary flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest">
+                      <GraduationCap className="size-3.5" /> Required to join
+                    </p>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-section">PE class section</Label>
+                      <SectionPicker
+                        id="signup-section"
+                        value={section}
+                        onChange={setSection}
+                        disabled={isLoading}
+                      />
+                      <p className="text-muted-foreground text-xs">
+                        Your section competes together on the Section Leaderboard
+                        and can win the weekly Section Champions glow.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="signup-favorite">Favourite player</Label>
+                      <FavoritePlayerPicker
+                        value={favoritePlayerId}
+                        onChange={setFavoritePlayerId}
+                        disabled={isLoading}
+                        allowClear={false}
+                      />
+                      <p className="text-muted-foreground text-xs">
+                        Search the squad by name, house or position — shown on
+                        your team card and the leaderboard.
+                      </p>
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -296,7 +344,15 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             </CardContent>
 
             <CardFooter className="flex-col gap-3">
-              <Button type="submit" className="w-full" disabled={isLoading}>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={
+                  isLoading ||
+                  // Mandatory onboarding gates registration.
+                  (mode === "signup" && (section === "" || favoritePlayerId === ""))
+                }
+              >
                 {isLoading ? (
                   <Loader2 className="mr-2 size-4 animate-spin" />
                 ) : mode === "signup" ? (

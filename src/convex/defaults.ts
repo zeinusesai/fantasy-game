@@ -33,8 +33,36 @@ export function houseLabel(house: unknown): string {
   return normalizeHouse(house) ?? "No house";
 }
 
-import type { House, Position } from "./schema";
-import { HOUSES, POSITIONS } from "./schema";
+import type { House, Position, Section } from "./schema";
+import { HOUSES, POSITIONS, SECTIONS } from "./schema";
+
+/**
+ * Normalise a manager's PE class section.
+ *
+ * Total function — never throws, always returns one of the eight real
+ * sections or `null`:
+ *   • null / undefined / ""                -> null (no section chosen yet)
+ *   • " section a " / "SECTION A"          -> "Section A" (case + space
+ *     tolerant, and a bare "A" / "a" is accepted so a legacy hand-typed row
+ *     still resolves)
+ *   • anything not in SECTIONS             -> null (corrupt/legacy row
+ *     degrades to the neutral state instead of rendering a fake section)
+ *
+ * This is the SINGLE normaliser for section values: every write path
+ * (onboarding, profile editor, Super Admin panel) and every read path
+ * (leaderboard, public profile, weekly cosmetic) goes through it, so a
+ * section can never be stored one way and displayed another.
+ */
+export function normalizeSection(value: unknown): Section | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim().toLowerCase();
+  if (raw === "") return null;
+  const direct = SECTIONS.find((s) => s.toLowerCase() === raw);
+  if (direct) return direct;
+  // Accept the bare letter form ("A" / "a") and a "sec a" shorthand.
+  const letter = raw.replace(/^section\s*/, "").replace(/^sec\s*/, "");
+  return SECTIONS.find((s) => s.toLowerCase() === `section ${letter}`) ?? null;
+}
 
 export const APP_DEFAULTS = {
   appTitle: "Y11 PE Hub",

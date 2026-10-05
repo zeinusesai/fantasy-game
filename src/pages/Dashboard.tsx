@@ -13,7 +13,7 @@ import {
 import { HouseCrest, PositionChip } from "@/components/houses";
 import { ScoringRulesCard } from "@/components/ScoringRulesCard";
 import { ScoreLine, PenaltyBadge } from "@/components/ScoreLine";
-import { Year12Celebration } from "@/components/Year12Celebration";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -200,7 +200,9 @@ export default function Dashboard() {
               {user?.teamName ?? `Welcome, ${user?.username}`}
             </h1>
           </div>
-          <div className="flex gap-2">
+          {/* flex-wrap + min-w-0 so the three CTAs wrap on a phone instead of
+              being clipped past the right edge of the viewport. */}
+          <div className="flex flex-wrap gap-2">
             {isAdmin && (
               <Button variant="outline" onClick={() => navigate("/admin")}>
                 <Shield className="mr-1.5 size-4" /> Admin panel
@@ -210,8 +212,8 @@ export default function Dashboard() {
               <Users className="mr-1.5 size-4" />
               {mySquad ? "Edit squad" : "Create squad"}
             </Button>
-            <Button variant="outline" onClick={() => navigate("/tournament")}>
-              <Trophy className="mr-1.5 size-4" /> Tournament
+            <Button variant="outline" onClick={() => navigate("/leaderboard")}>
+              <Trophy className="mr-1.5 size-4" /> Leaderboard
             </Button>
           </div>
         </div>
@@ -437,9 +439,7 @@ export default function Dashboard() {
             the Super Admin retunes the matrix. */}
         <ScoringRulesCard />
 
-        {/* Post-tournament state: "See you in Year 12!" podium + forfeit.
-            Renders nothing while the tournament is live. */}
-        <Year12Celebration />
+        
 
         {/* Hall of Fame — renders only after the Super Admin finalizes. */}
         <HallOfFameCard />

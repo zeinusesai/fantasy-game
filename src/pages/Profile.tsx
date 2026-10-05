@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { HouseSelector } from "@/components/HouseSupport";
+import { SectionPicker, FavoritePlayerPicker } from "@/components/OnboardingFields";
 import { formatMoney, safeBudget, toSafeAmount } from "@/convex/configDefaults";
 import { avatarPresetUrl } from "@/lib/fantasy";
 import { UserBadges } from "@/components/UserBadge";
@@ -25,7 +26,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { PageLoading } from "@/components/PageLoading";
 import { toast } from "sonner";
-import { Camera, Crown, Flame, Loader2, Save, Sparkles, Star, Zap } from "lucide-react";
+import { Camera, Crown, Flame, GraduationCap, Loader2, Save, Sparkles, Star, Trophy, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
@@ -119,6 +120,37 @@ export default function Profile() {
   useEffect(() => {
     if (user) setTitleDraft(user.customTitle ?? "");
   }, [user?._id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Mandatory onboarding, editable at any time from the profile ──
+  const setSection = useMutation(api.users.setSection);
+  const setFavoritePlayer = useMutation(api.users.setFavoritePlayer);
+  const [sectionBusy, setSectionBusy] = useState(false);
+
+  const saveSection = async (next: string) => {
+    setSectionBusy(true);
+    try {
+      await setSection({ section: next });
+      toast.success(`You're now in ${next}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save your section.");
+    } finally {
+      setSectionBusy(false);
+    }
+  };
+
+  const saveFavoritePlayer = async (playerId: string) => {
+    setSectionBusy(true);
+    try {
+      await setFavoritePlayer({ playerId });
+      toast.success(playerId === "" ? "Favourite player cleared." : "Favourite player saved.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not save your favourite player.",
+      );
+    } finally {
+      setSectionBusy(false);
+    }
+  };
+
   const myStatsResult = useQuery(api.managers.getMyStats);
   const config = useQuery(api.config.getConfig);
   const updateProfile = useMutation(api.managers.updateProfile);
@@ -137,9 +169,6 @@ export default function Profile() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
 
-  const playersResult = useQuery(api.players.listPlayers);
-  const playerChoices = playersResult ?? [];
-
   useEffect(() => {
     if (user && !loaded) {
       setTeamName(user.teamName ?? "");
@@ -157,7 +186,6 @@ export default function Profile() {
     try {
       await updateProfile({
         teamName: teamName.trim(),
-        favoritePlayerId: favoritePlayerId || undefined,
         // Sent always (even when blank) so clearing a handle unlinks it
         // server-side instead of silently keeping the old value.
         instagram: instagram.trim(),
@@ -271,29 +299,69 @@ export default function Profile() {
               />
             </div>
 
+            {/* ── PE class section (required at signup, editable here) ──
+                Saves through its own mutation on change, so it never rides
+                along with the "Save profile" submit and a rejected section can
+                never clobber an unrelated field. */}
             <div className="grid gap-2">
-              <Label>Favorite player</Label>
-              <Select
-                value={favoritePlayerId || "none"}
-                onValueChange={(v) => setFavoritePlayerId(v === "none" ? "" : v)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Pick your favorite player" />
-                </SelectTrigger>
-                <SelectContent className="max-h-64">
-                  <SelectItem value="none">None (N/A)</SelectItem>
-                  {playerChoices.map((p) => (
-                    <SelectItem key={p._id} value={String(p._id)}>
-                      {p.name} · {p.house} {p.position}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="profile-section">PE class section</Label>
+              <SectionPicker
+                id="profile-section"
+                value={user?.section ?? null}
+                onChange={saveSection}
+                disabled={sectionBusy}
+              />
               <p className="text-muted-foreground text-xs">
-                Shown next to your team on the global leaderboard, and pinned as
-                your MVP on your public profile card.
+                Your section competes together on the Section Leaderboard and can
+                win the weekly Section Champions glow.
               </p>
             </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="profile-favorite">Favorite player</Label>
+              <FavoritePlayerPicker
+                value={favoritePlayerId}
+                onChange={saveFavoritePlayer}
+                disabled={sectionBusy}
+              />
+              <p className="text-muted-foreground text-xs">
+                Search the squad by name, house or position. Shown next to your
+                team on the global leaderboard, and pinned as your MVP on your
+                public profile card.
+              </p>
+            </div>
+
+            {/* ── Temporary weekly cosmetic ──
+                True only while this manager's section is the most recent
+                "Section Champions" winner; it disappears automatically when the
+                next gameweek is closed. */}
+            {user?.isSectionChampion === true && (
+              <div className="section-champion-glow glass-subtle rounded-xl p-3">
+                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-amber-200">
+                  <Trophy className="size-3.5" /> Section Champions
+                </p>
+                <p className="mt-1 text-xs text-amber-100/80">
+                  {user.section} topped GW{user.sectionChampionGameweek ?? "?"} — the glow
+                  carries into GW{(user.sectionChampionGameweek ?? 0) + 1} and is replaced
+                  when that gameweek closes.
+                </p>
+              </div>
+            )}
+
+            {/* Section chip + champion state on the profile header. */}
+            {user?.section && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="glass-subtle inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold">
+                  <GraduationCap className="size-3.5 text-primary" />
+                  {user.section}
+                </span>
+                {user.isSectionChampion === true && (
+                  <span className="section-champion-name inline-flex items-center gap-1 rounded-full border border-amber-400/60 bg-amber-400/15 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-100">
+                    <Trophy className="size-3" /> Section Champions
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* ── Manual house preference ──
                 Saves on change via its own mutation call

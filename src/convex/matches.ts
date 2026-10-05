@@ -8,7 +8,7 @@ import {
   matchStatusValidator,
   STAGES,
 } from "./schema";
-import type { Position } from "./schema";
+import type { Position, Section } from "./schema";
 import { normalizeCrest } from "./crests";
 import { computePlayerPoints, resolveScoringRules, captainMultiplier } from "./points";
 import { getSettingsRow, normalizeSettings } from "./adminConfig";
@@ -1415,6 +1415,114 @@ function cleanGwNumber(n: number): number {
   return n;
 }
 
+/** Open-ended by design: any whole number of matches per gameweek. */
+function cleanMatchCount(n: number): number {
+  if (!Number.isInteger(n) || n < 1 || n > 12) {
+    throw new Error("Matches per gameweek must be a whole number between 1 and 12.");
+  }
+  return n;
+}
+
+/**
+ * Super Admin: set how many dynamic friendlies this gameweek should have
+ * (typically 2–4, more when required). Open-ended — the season is not capped
+ * at a fixed fixture list.
+ */
+export const setSeasonGameweekMatchCount = mutation({
+  args: { gameweek: v.number(), matchesPlanned: v.number() },
+  handler: async (ctx, { gameweek, matchesPlanned }) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(gameweek);
+    const count = cleanMatchCount(matchesPlanned);
+    const row = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (!row) throw new Error(`Gameweek ${number} does not exist.`);
+    await ctx.db.patch(row._id, { matchesPlanned: count });
+    return { gameweek: number, matchesPlanned: count };
+  },
+});
+
+/**
+ * Super Admin: generate a whole round of dynamic friendlies for a gameweek.
+ *
+ * Every match is fully custom and independent — a fresh pair of team names,
+ * crests and randomly drawn 7-a-side squads per fixture — so nothing is fixed
+ * week to week. The count defaults to the gameweek's `matchesPlanned` (or 3),
+ * and the plan is stamped onto the gameweek so the calendar shows it.
+ */
+export const createFriendlyRound = mutation({
+  args: {
+    gameweek: v.number(),
+    count: v.optional(v.number()),
+    homeTeamName: v.optional(v.string()),
+    awayTeamName: v.optional(v.string()),
+    homeCrest: v.optional(v.string()),
+    awayCrest: v.optional(v.string()),
+    kickoffLabel: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireSuperAdmin(ctx);
+    const number = cleanGwNumber(args.gameweek);
+
+    const row = await ctx.db
+      .query("seasonGameweeks")
+      .withIndex("by_number", (q) => q.eq("number", number))
+      .unique();
+    if (!row) throw new Error(`Gameweek ${number} does not exist.`);
+
+    const count = cleanMatchCount(args.count ?? row.matchesPlanned ?? 3);
+
+    const firstHome = args.homeTeamName?.trim();
+    const firstAway = args.awayTeamName?.trim();
+    const pool = shuffled(FRIENDLY_NAME_POOL);
+    const kickoffLabel = args.kickoffLabel?.trim();
+
+    const created: Id<"matches">[] = [];
+    for (let i = 0; i < count; i++) {
+      const squads = await drawRandomSquads(ctx);
+      if (squads.home.length === 0 || squads.away.length === 0) {
+        throw new Error(
+          "Not enough active players to draw two sides — import the roster first.",
+        );
+      }
+      const homeTeamName =
+        i === 0 && firstHome ? firstHome : (pool[(i * 2) % pool.length] ?? "Team Alpha");
+      const awayTeamName =
+        i === 0 && firstAway ? firstAway : (pool[(i * 2 + 1) % pool.length] ?? "Team Omega");
+
+      created.push(
+        await ctx.db.insert("matches", {
+          // Neutral legacy slots — a friendly never depends on house points.
+          stage: "group_stage",
+          homeHouse: "Fire",
+          awayHouse: "Water",
+          homeGoals: 0,
+          awayGoals: 0,
+          status: "scheduled",
+          createdAt: Date.now(),
+          friendly: true,
+          gameweek: number,
+          homeTeamName,
+          awayTeamName,
+          homeCrest: normalizeCrest(args.homeCrest),
+          awayCrest: normalizeCrest(args.awayCrest),
+          homeSquad: squads.home,
+          awaySquad: squads.away,
+          drawnAt: Date.now(),
+          kickoffLabel,
+        }),
+      );
+    }
+
+    if (row.matchesPlanned !== count) {
+      await ctx.db.patch(row._id, { matchesPlanned: count });
+    }
+    return { createdCount: created.length, matchesPlanned: count, matchIds: created };
+  },
+});
+
 /** Every season gameweek, GW1 first. Public: managers need to see status. */
 export const listSeasonGameweeks = query({
   args: {},
@@ -1518,7 +1626,30 @@ export const setSeasonGameweekStatus = mutation({
       ...(status === "open" ? { openedAt: now } : {}),
       ...(status === "closed" ? { closedAt: now } : {}),
     });
-    return { number, status };
+
+    // Closing a gameweek is the trigger for the weekly "Section Champions"
+    // cosmetic: the top-scoring PE section for THIS week is recorded, which
+    // automatically retires the previous week's winner (the read path always
+    // uses the newest row). Non-fatal — a cosmetic failure never blocks the
+    // closure itself.
+    let champion: { awarded: boolean; section?: Section; totalPoints?: number } = {
+      awarded: false,
+    };
+    if (status === "closed") {
+      try {
+        const result = await ctx.runMutation(internal.leaderboard.awardSectionChampions, {
+          gameweek: number,
+        });
+        champion = {
+          awarded: result.awarded,
+          ...(result.awarded ? { section: result.section, totalPoints: result.totalPoints } : {}),
+        };
+      } catch {
+        champion = { awarded: false };
+      }
+    }
+
+    return { number, status, sectionChampion: champion };
   },
 });
 

@@ -39,7 +39,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TRANSITION_CONFIRM_PHRASE } from "@/convex/admin";
+// NOTE: import the shared constant from `configDefaults`, never from
+// `@/convex/admin` — that module pulls `./_generated/server` (and its
+// `process.env`) into the browser bundle and crashes the /admin route.
+import { TRANSITION_CONFIRM_PHRASE } from "@/convex/configDefaults";
 import { CREST_PRESETS, crestPreset, normalizeCrest } from "@/convex/crests";
 import { cn } from "@/lib/utils";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -132,6 +135,11 @@ export function SeasonTab() {
   const existing = useQuery(api.matches.listGameweekMatches, { gameweek: activeGw });
   const createFriendly = useMutation(api.matches.createFriendlyMatch);
   const previewRandom = useMutation(api.matches.previewRandomFriendly);
+  const createFriendlyRound = useMutation(api.matches.createFriendlyRound);
+  const setMatchCount = useMutation(api.matches.setSeasonGameweekMatchCount);
+  // Open-ended gameweeks: the Super Admin decides how many friendlies each
+  // gameweek holds (typically 2–4, more when required).
+  const [matchCount, setMatchCountInput] = useState("3");
 
   const [homeName, setHomeName] = useState("Team Alpha");
   const [awayName, setAwayName] = useState("Team Omega");
@@ -224,6 +232,43 @@ export function SeasonTab() {
     });
   };
 
+  /** Draw a whole round of dynamic friendlies for the active gameweek. */
+  const generateRound = async () => {
+    const count = Number(matchCount);
+    if (!Number.isInteger(count) || count < 1) {
+      toast.error("Enter how many matches this gameweek should have.");
+      return;
+    }
+    setFriendlyBusy(true);
+    try {
+      const result = await createFriendlyRound({ gameweek: activeGw, count });
+      toast.success(
+        `GW${activeGw}: ${result.createdCount} dynamic friendly${
+          result.createdCount === 1 ? "" : "ies"
+        } drawn.`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not generate the round.");
+    } finally {
+      setFriendlyBusy(false);
+    }
+  };
+
+  /** Persist the planned match count on the gameweek row. */
+  const saveMatchCount = async () => {
+    const count = Number(matchCount);
+    if (!Number.isInteger(count) || count < 1) {
+      toast.error("Enter how many matches this gameweek should have.");
+      return;
+    }
+    try {
+      await setMatchCount({ gameweek: activeGw, matchesPlanned: count });
+      toast.success(`GW${activeGw} is planned for ${count} matches.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the plan.");
+    }
+  };
+
   const runEnsure = async () => {
     try {
       const result = await ensureGameweeks({ upTo: 30 });
@@ -271,7 +316,7 @@ export function SeasonTab() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="flex w-full max-w-6xl flex-col gap-8 mx-auto p-6">
       {/* ── Season gameweek calendar ─────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -438,8 +483,9 @@ export function SeasonTab() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search the roster by name or position…"
               />
-              <ScrollArea className="max-h-56 rounded-lg border border-border/70">
-                <div className="grid gap-1 p-2 sm:grid-cols-2">
+              {/* Bounded + scrollable so the roster can never spill over the card below. */}
+              <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/50 p-3 pr-2">
+                <div className="grid gap-1 sm:grid-cols-2">
                   {filteredPlayers.length === 0 ? (
                     <p className="text-muted-foreground p-2 text-sm">
                       No players match that search.
@@ -456,7 +502,7 @@ export function SeasonTab() {
                             toggleSide(p._id, onAway ? "away" : "home")
                           }
                           className={cn(
-                            "flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors",
+                            "flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-slate-800/60",
                             onHome &&
                               "border-electric/60 bg-electric/10 text-teal-200",
                             onAway &&
@@ -475,16 +521,49 @@ export function SeasonTab() {
                     })
                   )}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            {/* Dedicated action bar BELOW the scrollable roster, so the
+                buttons can never float over or spill into the list. */}
+            <div className="mt-4 flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
               <Button variant="outline" onClick={randomize} disabled={friendlyBusy}>
                 <Shuffle className="size-4" /> Randomize Teams
               </Button>
               <Button onClick={saveFriendly} disabled={friendlyBusy}>
                 <Save className="size-4" /> Save fixture
               </Button>
+            </div>
+
+            {/* Round generator: one click draws N fully dynamic friendlies
+                (fresh names, crests and random squads for every fixture). */}
+            <div className="border-border/70 flex flex-wrap items-end gap-2 border-t pt-4">
+              <div className="space-y-1">
+                <label
+                  htmlFor="gw-match-count"
+                  className="text-muted-foreground block text-xs font-semibold uppercase tracking-widest"
+                >
+                  Matches in GW{activeGw}
+                </label>
+                <Input
+                  id="gw-match-count"
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={matchCount}
+                  onChange={(e) => setMatchCountInput(e.target.value)}
+                  className="w-24"
+                />
+              </div>
+              <Button variant="outline" onClick={generateRound} disabled={friendlyBusy}>
+                <Shuffle className="size-4" /> Generate round
+              </Button>
+              <Button variant="ghost" onClick={saveMatchCount} disabled={friendlyBusy}>
+                Save plan
+              </Button>
+              <p className="text-muted-foreground w-full text-xs">
+                Open-ended gameweeks — set any number (typically 2–4, more if required).
+              </p>
             </div>
 
             {existing !== undefined && existing.length > 0 && (

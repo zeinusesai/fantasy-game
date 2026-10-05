@@ -111,8 +111,8 @@ export default function Landing() {
                   Create your team <ArrowRight className="ml-1 size-4" />
                 </Button>
               )}
-              <Button size="lg" variant="outline" onClick={() => navigate("/tournament")}>
-                <Play className="mr-1 size-4" /> This week's fixture
+              <Button size="lg" variant="outline" onClick={() => navigate("/leaderboard")}>
+                <Play className="mr-1 size-4" /> See the standings
               </Button>
             </div>
             <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
@@ -298,7 +298,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 py-6 text-center text-xs text-slate-500">
+      <footer className="border-t border-white/10 py-6 text-center text-xs text-slate-400">
         {uiText.appTitle} · Year 11 PE · 7-a-side Fantasy League
       </footer>
     </div>

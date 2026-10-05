@@ -185,6 +185,49 @@ export const setPlayerStatus = mutation({
 });
 
 /**
+ * Super Admin: set a player's availability / injury state.
+ *
+ * Replaces the old starter/sub/reserve designations with a single simple
+ * three-state value: available (default), injured (out of the upcoming
+ * gameweek) or doubtful (unlikely to play). SquadBuilder and the player market
+ * surface this immediately as a badge, and a warning icon when picking a
+ * doubtful or injured player for a squad.
+ */
+export const setPlayerAvailability = mutation({
+  args: {
+    playerId: v.id("players"),
+    status: v.union(
+      v.literal("available"),
+      v.literal("injured"),
+      v.literal("doubtful"),
+    ),
+  },
+  handler: async (ctx, { playerId, status }) => {
+    await requireSuperAdmin(ctx);
+    const player = await ctx.db.get(playerId);
+    if (!player) throw new Error("Player not found — it may have already been removed.");
+    if (player.status === status) return { status };
+    try {
+      await ctx.db.patch(playerId, { status });
+      try {
+        await ctx.runMutation(internal.audit.logAudit, {
+          action: "set_player_availability",
+          category: "config",
+          target: player.name,
+          detail: status,
+        });
+      } catch {
+        // audit is non-fatal
+      }
+      return { status };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not found")) throw err;
+      throw new Error("Could not update availability — please try again.");
+    }
+  },
+});
+
+/**
  * Super Admin only: set the same availability label on many players at once
  * (e.g. a whole house or the entire roster). Only ids that still exist are
  * touched; unknown ids are skipped instead of failing the whole batch.

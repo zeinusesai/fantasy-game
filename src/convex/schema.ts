@@ -31,6 +31,40 @@ export const statusLabelValidator = v.union(
 );
 export type PlayerStatusLabel = Infer<typeof statusLabelValidator>;
 
+// Y11 PE Hub — simple availability / injury state. This REPLACES the old
+// starter / sub / reserve designations: a player is simply available, injured
+// (out of the upcoming gameweek) or doubtful (unlikely to play).
+export const PLAYER_AVAILABILITY = ["available", "injured", "doubtful"] as const;
+export const playerAvailabilityValidator = v.union(
+  ...PLAYER_AVAILABILITY.map((s) => v.literal(s)),
+);
+export type PlayerAvailability = Infer<typeof playerAvailabilityValidator>;
+
+// ── Y11 PE class sections ──────────────────────────────────────────────
+//
+// Every manager belongs to exactly one PE section, and this is the ONLY
+// grouping the Y11 PE Hub leaderboards use. It is a closed list of eight so
+// the client dropdown, the section leaderboard and the weekly "Section
+// Champions" cosmetic can all agree on the same eight values.
+//
+// `users.section` is deliberately stored as a plain optional STRING rather
+// than this union: rows predating the section feature (and the two seeded
+// admin accounts) can hold arbitrary text, and tightening the column would
+// make every existing row unreadable. All WRITES go through
+// `normalizeSection()` in defaults.ts, which is total — anything outside the
+// list is rejected on write and degrades to `null` on read.
+export const SECTIONS = [
+  "Section A",
+  "Section B",
+  "Section C",
+  "Section D",
+  "Section E",
+  "Section F",
+  "Section G",
+  "Section H",
+] as const;
+export type Section = (typeof SECTIONS)[number];
+
 export const STAGES = [
   "semifinal1",
   "semifinal2",
@@ -172,9 +206,12 @@ const schema = defineSchema(
       stats: v.optional(v.any()),
       // Optional custom player photo (URL or data URL) set by the Super Admin.
       image: v.optional(v.string()),
-      // Optional availability label (Expected to Start | Sub | Not Play) set
-      // by the Super Admin; absent = treated as "Expected to Start" in the UI.
+      // LEGACY starter/sub/reserve label — kept only so existing rows stay valid;
+      // the UI no longer reads or writes it.
       statusLabel: v.optional(statusLabelValidator),
+      // Availability / injury state set by the Super Admin.
+      // Optional so every existing player row remains valid; absent = "available".
+      status: v.optional(playerAvailabilityValidator),
     })
       .index("by_house", ["house"])
       .index("by_position", ["position"])
@@ -545,6 +582,27 @@ const schema = defineSchema(
     //
     // Weekly friendlies hang off `matches.gameweek`, which points at
     // `seasonGameweeks.number`.
+    // ===== Y11 PE Hub: weekly "Section Champions" cosmetic =====
+    //
+    // One row per CLOSED gameweek, written automatically when the Super
+    // Admin closes that gameweek. It records which PE section topped the
+    // aggregate points table for that week, so the whole section's card and
+    // every manager in it can wear the glow.
+    //
+    // The cosmetic is TEMPORARY by construction: the read path always uses the
+    // HIGHEST-numbered row, so the badge disappears the moment the next
+    // gameweek is closed and a new row is written. Nothing has to be swept or
+    // expired by a cron — a stale row is simply no longer the latest one.
+    sectionChampions: defineTable({
+      gameweek: v.number(), // the gameweek that was just closed
+      section: v.string(), // normalized SECTIONS value that topped the week
+      totalPoints: v.number(), // that section's aggregate points for the week
+      managerCount: v.number(), // how many managers it scored with
+      awardedAt: v.number(), // epoch ms, for the "awarded on" label
+    })
+      .index("by_gameweek", ["gameweek"])
+      .index("by_section", ["section"]),
+
     seasonGameweeks: defineTable({
       number: v.number(), // 1, 2, 3 … 30+
       label: v.string(), // "GW1"
@@ -556,6 +614,10 @@ const schema = defineSchema(
         v.literal("closed"),
       ),
       deadlineAt: v.optional(v.number()), // epoch ms
+      // How many dynamic friendlies the Super Admin wants in this gameweek.
+      // Open-ended: any number (typically 2–4, more if required). Used as the
+      // default when generating the round; the generator can override it.
+      matchesPlanned: v.optional(v.number()),
       openedAt: v.optional(v.number()),
       closedAt: v.optional(v.number()),
       note: v.optional(v.string()),

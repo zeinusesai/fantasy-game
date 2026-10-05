@@ -66,7 +66,7 @@ export function PickedByDialog({
               <p className="text-muted-foreground animate-pulse text-sm font-medium">
                 No managers have picked this player yet.
               </p>
-              <p className="text-muted-foreground/60 text-xs">
+              <p className="text-muted-foreground/85 text-xs">
                 Be the first to draft them — a true differential.
               </p>
             </div>

@@ -13,7 +13,8 @@ import { FIXED_MANAGER_BUDGET } from "./configDefaults";
 import { normalizeSettings, getSettingsRow } from "./adminConfig";
 import { internal } from "./_generated/api";
 import { modifyAccountCredentials, invalidateSessions } from "@convex-dev/auth/server";
-import { houseValidator } from "./schema";
+import { houseValidator, SECTIONS } from "./schema";
+import { normalizeSection } from "./defaults";
 import type { Doc } from "./_generated/dataModel";
 
 // ── Super admin: user management ─────────────────────────────────────────
@@ -94,6 +95,15 @@ export const listAllUsersWithRoles = query({
       if (!me || me.role !== "super_admin" || !isSuperAdminIdentity(me)) return [];
 
       const users = await ctx.db.query("users").collect();
+      // Resolve each manager's favourite player once so the admin table can
+      // show (and correct) it without an N+1 query per row.
+      const playerNames = new Map<string, string>();
+      try {
+        const players = await ctx.db.query("players").collect();
+        for (const p of players) playerNames.set(String(p._id), p.name);
+      } catch {
+        // A missing roster only costs the name column, never the row.
+      }
       return users
         .map((u) => ({
           _id: u._id,
@@ -102,6 +112,17 @@ export const listAllUsersWithRoles = query({
           image: u.image ?? null,
           role: normalizeRole(u.role),
           customBadge: u.customBadge ?? null,
+          // Mandatory onboarding fields, normalised through the same validator
+          // the signup/profile write paths use.
+          section: normalizeSection(u.section),
+          favoritePlayerId:
+            typeof u.favoritePlayerId === "string" && u.favoritePlayerId !== ""
+              ? u.favoritePlayerId
+              : null,
+          favoritePlayerName:
+            typeof u.favoritePlayerId === "string"
+              ? (playerNames.get(u.favoritePlayerId) ?? null)
+              : null,
         }))
         .sort((a, b) => (a.username ?? "").localeCompare(b.username ?? ""));
     } catch {
@@ -357,6 +378,68 @@ export const deleteUserWithCascade = mutation({
       scoresDeleted: result?.scoresDeleted ?? 0,
       requestsDeleted: result?.requestsDeleted ?? 0,
     };
+  },
+});
+
+/**
+ * Super Admin only: correct any manager's PE class section (e.g. they picked
+ * the wrong one at registration).
+ *
+ * A blank value CLEARS the section; anything outside Section A–H is rejected
+ * rather than stored. Both branches go through `normalizeSection`, the same
+ * normaliser the signup and self-service paths use, so the admin panel can
+ * never write a value the rest of the app would refuse to read.
+ */
+export const setUserSection = mutation({
+  args: { targetUserId: v.id("users"), section: v.optional(v.string()) },
+  handler: async (ctx, { targetUserId, section }) => {
+    await requireSuperAdmin(ctx);
+    const target = await ctx.db.get(targetUserId);
+    if (!target) throw new Error("User not found — they may already be deleted.");
+
+    const raw = typeof section === "string" ? section : "";
+    const resolved = normalizeSection(raw);
+    if (raw.trim() !== "" && resolved === null) {
+      throw new Error(`Section must be one of: ${SECTIONS.join(", ")}.`);
+    }
+
+    await ctx.db.patch(targetUserId, { section: resolved ?? undefined });
+    return { section: resolved };
+  },
+});
+
+/**
+ * Super Admin only: correct (or clear) any manager's favourite player.
+ *
+ * The id must resolve to a real player row — a dangling id is rejected rather
+ * than stored, because it would render blank everywhere the favourite is shown.
+ */
+export const setUserFavoritePlayer = mutation({
+  args: { targetUserId: v.id("users"), playerId: v.optional(v.string()) },
+  handler: async (ctx, { targetUserId, playerId }) => {
+    await requireSuperAdmin(ctx);
+    const target = await ctx.db.get(targetUserId);
+    if (!target) throw new Error("User not found — they may already be deleted.");
+
+    const raw = typeof playerId === "string" ? playerId.trim() : "";
+    if (raw === "") {
+      await ctx.db.patch(targetUserId, { favoritePlayerId: undefined });
+      return { favoritePlayerId: null as string | null };
+    }
+
+    let resolvedId: string | null = null;
+    try {
+      const player = await ctx.db.get(raw as Doc<"players">["_id"]);
+      if (player && typeof player.name === "string") resolvedId = String(player._id);
+    } catch {
+      resolvedId = null;
+    }
+    if (!resolvedId) {
+      throw new Error("That player could not be found — pick someone from the roster.");
+    }
+
+    await ctx.db.patch(targetUserId, { favoritePlayerId: resolvedId });
+    return { favoritePlayerId: resolvedId };
   },
 });
 

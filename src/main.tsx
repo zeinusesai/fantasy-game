@@ -20,7 +20,7 @@ const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const SquadBuilder = lazy(() => import("./pages/SquadBuilder.tsx"));
-const Tournament = lazy(() => import("./pages/Tournament.tsx"));
+
 const MatchDetail = lazy(() => import("./pages/MatchDetail.tsx"));
 const Leaderboard = lazy(() => import("./pages/Leaderboard.tsx"));
 const Profile = lazy(() => import("./pages/Profile.tsx"));
@@ -191,10 +191,7 @@ createRoot(document.getElementById("root")!).render(
                   </RequireAuth>
                 }
               />
-              <Route
-                path="/tournament"
-                element={<Tournament />}
-              />
+              
               <Route
                 path="/match/:matchId"
                 element={<MatchDetail />}

@@ -45,6 +45,12 @@ const QUERIES = [
   "requests:getMyPhotoRequests",
   "admin:getSeasonStatus",
   "admin:getTransitionPreview",
+  // Y11 PE Hub: mandatory onboarding + the Section Leaderboard and its
+  // temporary weekly "Section Champions" cosmetic.
+  "users:listSections",
+  "users:getOnboardingStatus",
+  "leaderboard:getSectionChampion",
+  "leaderboard:getSectionLeaderboard",
 ];
 
 const token = await signIn();

@@ -3,9 +3,10 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { readUserCosmetics, requireUser } from "./lib";
 import { getLeaderboardRows } from "./lib";
-import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle, normalizeHouse } from "./defaults";
+import { DEFAULT_BADGE_REGISTRY, cleanBadgeId, cleanSocialHandle, normalizeHouse, normalizeSection } from "./defaults";
+import { readActiveSectionChampion } from "./leaderboard";
 import { cosmeticById } from "./rewards";
-import { HOUSES, type House } from "./schema";
+import { HOUSES, SECTIONS, type House } from "./schema";
 import type { Doc, Id } from "./_generated/dataModel";
 
 /**
@@ -105,9 +106,23 @@ export const currentUser = query({
     // a failed lookup means "nothing unlocked", never a rejected query.
     const cosmetics = await readUserCosmetics(ctx, user);
 
+    // Normalised server-side so the client renders `user.section` without
+    // re-validating, and so a legacy/garbage value can never leak into the UI.
+    const section = normalizeSection(user.section);
+    // Temporary weekly cosmetic — true only while this manager's section holds
+    // the "Section Champions" award. Re-evaluated on every gameweek closure.
+    const champion = await readActiveSectionChampion(ctx);
+    const isSectionChampion = section !== null && champion?.section === section;
+
     return {
       ...user,
       customBadge: user.customBadge ?? null,
+      section,
+      favoritePlayerId: typeof user.favoritePlayerId === "string" ? user.favoritePlayerId : undefined,
+      isSectionChampion,
+      // Included so Profile can render the "expires after GW{n+1}" hint without
+      // a second query.
+      sectionChampionGameweek: isSectionChampion ? (champion?.gameweek ?? null) : null,
       // Cosmetics, already normalised server-side so the client can render
       // `user.activePitchTheme ?? "default"` without another lookup.
       activePitchTheme: cosmetics.activePitchTheme,
@@ -148,6 +163,12 @@ export const getPublicProfile = query({
       if (!user) return null;
 
       const cosmetics = await readUserCosmetics(ctx, user);
+
+      // Temporary weekly cosmetic, resolved once for the whole card.
+      const champion = await readActiveSectionChampion(ctx);
+      const managerSection = normalizeSection(user.section);
+      const isSectionChampion =
+        managerSection !== null && champion?.section === managerSection;
 
       // ── Achievements: points + rank, from the shared leaderboard ──
       let totalPoints = 0;
@@ -270,13 +291,15 @@ export const getPublicProfile = query({
           favouriteHouse: supportedHouse,
         },
         supportedHouse,
-        // Y11 PE Hub grouping — `user?.section ?? null` fallback, so a profile
-        // without a PE class group degrades to a neutral state rather than
-        // reaching for a house that no longer exists.
-        section:
-          typeof user.section === "string" && user.section.trim() !== ""
-            ? user.section.trim().slice(0, 24)
-            : null,
+        // Y11 PE Hub grouping — normalised through the SAME validator the
+        // write paths use, so a profile can never display a section the server
+        // would not accept, and a legacy/garbage value degrades to `null`
+        // rather than reaching for a grouping that does not exist.
+        section: normalizeSection(user.section),
+        // Temporary weekly cosmetic: true only while this manager's section is
+        // the most recent "Section Champions" winner.
+        isSectionChampion,
+        sectionChampionGameweek: isSectionChampion ? (champion?.gameweek ?? null) : null,
         favouritePlayer,
       };
     } catch {
@@ -356,5 +379,133 @@ export const updateSupportedHouse = mutation({
       }
       throw new Error("Could not update your supported house — please try again.");
     }
+  },
+});
+/**
+ * Y11 PE Hub — mandatory onboarding.
+ *
+ * Every manager picks a PE class section and a favourite player when they
+ * register, and can change either at any time from Profile. Both writes are
+ * validated against the SAME normalisers the read paths use (`normalizeSection`
+ * in defaults.ts), so a value can never be stored one way and displayed
+ * another.
+ */
+
+/** The eight selectable sections. Public: the signup dropdown reads this. */
+export const listSections = query({
+  args: {},
+  handler: async () => SECTIONS,
+});
+
+/**
+ * Set (or clear) the signed-in manager's PE class section.
+ *
+ * A blank value CLEARS the preference rather than writing a sentinel, and a
+ * value outside Section A–H is rejected outright — never stored. Typed as a
+ * plain optional string (not `sectionValidator`) so a stale or tampered client
+ * gets this readable message instead of an opaque `ArgumentValidationError`.
+ */
+export const setSection = mutation({
+  args: { section: v.optional(v.string()) },
+  handler: async (ctx, { section }) => {
+    let user: Doc<"users">;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to choose your section.",
+      );
+    }
+
+    const raw = typeof section === "string" ? section : "";
+    const resolved = normalizeSection(raw);
+    // A non-empty value that does not resolve is a genuine mistake (typo, or a
+    // client sending something outside the list) and must not be swallowed.
+    if (raw.trim() !== "" && resolved === null) {
+      throw new Error(`Section must be one of: ${SECTIONS.join(", ")}.`);
+    }
+
+    try {
+      await ctx.db.patch(user._id, { section: resolved ?? undefined });
+      return { section: resolved };
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Section must be")) throw err;
+      throw new Error("Could not save your section — please try again.");
+    }
+  },
+});
+
+/**
+ * Set (or clear) the signed-in manager's favourite player.
+ *
+ * The id must resolve to a real player row; a dangling or hand-typed id is
+ * rejected instead of being stored, because a stored-but-dead id renders as a
+ * blank favourite everywhere it is displayed. Clearing sends an empty string,
+ * which removes the field.
+ */
+export const setFavoritePlayer = mutation({
+  args: { playerId: v.optional(v.string()) },
+  handler: async (ctx, { playerId }) => {
+    let user: Doc<"users">;
+    try {
+      user = await requireUser(ctx);
+    } catch (err) {
+      throw new Error(
+        err instanceof Error ? err.message : "Sign in to pick a favourite player.",
+      );
+    }
+
+    const raw = typeof playerId === "string" ? playerId.trim() : "";
+    if (raw === "") {
+      await ctx.db.patch(user._id, { favoritePlayerId: undefined });
+      return { favoritePlayerId: null as string | null };
+    }
+
+    // The stored value is a plain string (legacy rows predate strict typing),
+    // so it is validated and cast here; a malformed id throws and is caught.
+    let resolvedId: string | null = null;
+    try {
+      const player = await ctx.db.get(raw as Id<"players">);
+      if (player && typeof player.name === "string") resolvedId = String(player._id);
+    } catch {
+      resolvedId = null;
+    }
+    if (!resolvedId) {
+      throw new Error("That player could not be found — pick someone from the list.");
+    }
+
+    try {
+      await ctx.db.patch(user._id, { favoritePlayerId: resolvedId });
+      return { favoritePlayerId: resolvedId };
+    } catch {
+      throw new Error("Could not save your favourite player — please try again.");
+    }
+  },
+});
+
+/**
+ * Whether the signed-in manager still owes the mandatory onboarding fields.
+ *
+ * The client uses this to keep a signed-in but incomplete account out of the
+ * rest of the app until both a section and a favourite player exist.
+ */
+export const getOnboardingStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return { signedIn: false as const, complete: true as const };
+    const user = await ctx.db.get(userId);
+    if (!user) return { signedIn: false as const, complete: true as const };
+    const section = normalizeSection(user.section);
+    const favoritePlayerId =
+      typeof user.favoritePlayerId === "string" && user.favoritePlayerId !== ""
+        ? user.favoritePlayerId
+        : null;
+    return {
+      signedIn: true as const,
+      complete: section !== null && favoritePlayerId !== null,
+      section,
+      favoritePlayerId,
+    };
   },
 });
