@@ -8,7 +8,6 @@ import {
   Command,
   CommandEmpty,
   CommandGroup,
-  CommandInput,
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
@@ -50,14 +49,12 @@ export function SectionPicker({
   onChange,
   disabled,
   placeholder = "Choose your PE section",
-  emptyLabel = "No section chosen yet",
   id,
 }: {
   value: string | null | undefined;
   onChange: (section: string) => void;
   disabled?: boolean;
   placeholder?: string;
-  emptyLabel?: string;
   id?: string;
 }) {
   const sections = useSections();
@@ -226,7 +223,7 @@ export function FavoritePlayerPicker({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search players…"
+              placeholder={placeholder}
               className="placeholder:text-muted-foreground h-9 w-full bg-transparent text-sm outline-none"
               autoComplete="off"
             />
